@@ -38,6 +38,8 @@ export default function Header({ onOpenAddGoal, onToggleMobileNav }) {
     day: 'numeric',
   });
 
+  const randomQuote = MOTIVATIONAL_QUOTES[new Date().getDay() % MOTIVATIONAL_QUOTES.length];
+
   const firstName = currentUser?.displayName
     ? currentUser.displayName.split(' ')[0]
     : (currentUser?.email ? currentUser.email.split('@')[0] : 'Athlete');
