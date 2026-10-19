@@ -13,8 +13,8 @@ import {
   sendPasswordResetEmail,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db, googleProvider, isFirebaseConfigured } from '../firebase';
-import { getStoredItem, setStoredItem } from './storageHelper';
+import { auth, db, googleProvider, isFirebaseConfigured } from '../firebase.js';
+import { getStoredItem, setStoredItem } from './storageHelper.js';
 
 const DEFAULT_TARGETS = {
   calories: 2600,
@@ -254,25 +254,12 @@ export const authService = {
    * Complete Sign Out
    */
   async signOut() {
-    // 1. Wipe active user & session markers immediately
-    const currentActive = getStoredItem('active_user', null);
-    const activeUid = currentActive?.uid || auth?.currentUser?.uid;
-
+    // 1. Wipe active session user & temporary markers
     setStoredItem('active_user', null);
     sessionStorage.removeItem('last_auth_provider');
     sessionStorage.removeItem('prompt_google_onboarding');
 
-    // 2. Clear user-scoped offline goal caches
-    if (activeUid) {
-      try {
-        localStorage.removeItem(`levelup_goals_${activeUid}`);
-        localStorage.removeItem(`levelup_dailyLogs_${activeUid}`);
-      } catch (e) {
-        console.warn('Cache clearing note:', e);
-      }
-    }
-
-    // 3. Complete Firebase Sign Out
+    // 2. Complete Firebase Sign Out
     if (auth) {
       try {
         await firebaseSignOut(auth);

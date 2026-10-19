@@ -36,39 +36,53 @@ export const goalsService = {
       return () => {};
     }
 
+    // 1. Instantly deliver user-scoped cached goals (prevents goals from disappearing on reload or re-login)
+    const initialCached = getStoredItem(`goals_${uid}`, []);
+    if (typeof onUpdate === 'function') {
+      onUpdate(initialCached);
+    }
+
+    // 2. Real-time Firestore sync
     if (db) {
       try {
         const goalsColl = collection(db, 'users', uid, 'goals');
-        const q = query(goalsColl, orderBy('createdAt', 'desc'));
 
         return onSnapshot(
-          q,
+          goalsColl,
           (snapshot) => {
-            const goals = snapshot.docs.map((docSnap) => ({
+            const liveGoals = snapshot.docs.map((docSnap) => ({
               id: docSnap.id,
               ...docSnap.data(),
             }));
-            // Update local user cache for offline resilience
-            setStoredItem(`goals_${uid}`, goals);
-            if (typeof onUpdate === 'function') onUpdate(goals);
+
+            // Sort in memory (newest first)
+            liveGoals.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+            // Merge with local cache so newly created offline goals are never lost
+            const currentCache = getStoredItem(`goals_${uid}`, []);
+            const liveIds = new Set(liveGoals.map((g) => g.id));
+            const offlineOnlyGoals = currentCache.filter((g) => !liveIds.has(g.id));
+            const mergedGoals = [...offlineOnlyGoals, ...liveGoals];
+            mergedGoals.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+            setStoredItem(`goals_${uid}`, mergedGoals);
+            if (typeof onUpdate === 'function') onUpdate(mergedGoals);
           },
           (error) => {
-            console.error(`[Firestore:goals] Error listening to users/${uid}/goals:`, error);
-            // Fallback to user-scoped cache only
-            const cached = getStoredItem(`goals_${uid}`, []);
-            if (typeof onUpdate === 'function') onUpdate(cached);
+            console.warn(`[Firestore:goals] Error listening to users/${uid}/goals:`, error.message);
+            const fallback = getStoredItem(`goals_${uid}`, []);
+            if (typeof onUpdate === 'function') onUpdate(fallback);
             if (typeof onError === 'function') onError(error);
           }
         );
       } catch (err) {
         console.error('[Firestore:goals] Subscription setup failed:', err);
+        const fallback = getStoredItem(`goals_${uid}`, []);
+        if (typeof onUpdate === 'function') onUpdate(fallback);
         if (typeof onError === 'function') onError(err);
       }
     }
 
-    // Offline / fallback: return user-scoped cache (never demo goals)
-    const cached = getStoredItem(`goals_${uid}`, []);
-    if (typeof onUpdate === 'function') onUpdate(cached);
     return () => {};
   },
 
@@ -210,29 +224,30 @@ export const goalsService = {
   async getDailyLog(uid, dateKey = getTodayDateKey()) {
     if (!uid) return [];
 
+    const allUserLogs = getStoredItem(`dailyLogs_${uid}`, {});
+    const localDaily = allUserLogs[dateKey] || [];
+
     if (db) {
       try {
         const logRef = doc(db, 'users', uid, 'dailyLogs', dateKey);
         const snap = await getDoc(logRef);
         if (snap.exists()) {
           const data = snap.data();
-          const completedGoals = Array.isArray(data?.completedGoals) ? data.completedGoals : [];
-          // Update cache
-          const allUserLogs = getStoredItem(`dailyLogs_${uid}`, {});
-          allUserLogs[dateKey] = completedGoals;
+          const firestoreCompleted = Array.isArray(data?.completedGoals) ? data.completedGoals : [];
+          // Merge local and firestore without duplicates
+          const merged = Array.from(new Set([...localDaily, ...firestoreCompleted]));
+          allUserLogs[dateKey] = merged;
           setStoredItem(`dailyLogs_${uid}`, allUserLogs);
-          return completedGoals;
+          return merged;
         }
-        return [];
+        return localDaily;
       } catch (err) {
         console.warn(`[Firestore:dailyLogs] Read error at users/${uid}/dailyLogs/${dateKey}:`, err.code, err.message);
-        const allUserLogs = getStoredItem(`dailyLogs_${uid}`, {});
-        return allUserLogs[dateKey] || [];
+        return localDaily;
       }
     }
 
-    const allUserLogs = getStoredItem(`dailyLogs_${uid}`, {});
-    return allUserLogs[dateKey] || [];
+    return localDaily;
   },
 
   /**
