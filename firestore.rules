@@ -1,0 +1,92 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // 1. Private User Documents & Subcollections
+    match /users/{userId} {
+      // User can read and update their own profile
+      allow read, write: if isOwner(userId);
+
+      // Goals subcollection: only owner can read and write
+      match /goals/{goalId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Daily Logs subcollection: only owner can read and write
+      match /dailyLogs/{date} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Food & Nutrition Logs: strictly private
+      match /foodLogs/{logId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Workouts: strictly private
+      match /workouts/{workoutId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Hydration Logs
+      match /waterLogs/{date} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Step Logs
+      match /stepLogs/{date} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Weight Logs
+      match /weightLogs/{recordId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // 2. Public Profiles (for social search, friend cards, leaderboards)
+    match /profiles/{userId} {
+      // Anyone authenticated can read public profiles
+      allow read: if isAuthenticated();
+      // Only the user can write their public profile
+      allow write: if isOwner(userId);
+    }
+
+    // 3. Friend Requests
+    match /friendRequests/{requestId} {
+      allow read: if isAuthenticated() && (
+        resource.data.senderId == request.auth.uid || 
+        resource.data.recipientId == request.auth.uid
+      );
+      allow create: if isAuthenticated() && request.resource.data.senderId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (
+        resource.data.senderId == request.auth.uid || 
+        resource.data.recipientId == request.auth.uid
+      );
+    }
+
+    // 4. Community Challenges
+    match /challenges/{challengeId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      // Only challenge creator or participants can update
+      allow update: if isAuthenticated();
+      allow delete: if isAuthenticated() && resource.data.creatorId == request.auth.uid;
+    }
+
+    // 5. Global Leaderboard Summaries
+    match /leaderboards/{leaderboardId} {
+      allow read: if isAuthenticated();
+      // Updates must be done via authenticated user or cloud function
+      allow write: if isAuthenticated();
+    }
+  }
+}
