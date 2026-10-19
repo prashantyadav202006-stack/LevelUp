@@ -2,9 +2,9 @@
  * Achievements & Gamification Engine
  * Calculates authentic XP points, levels, and unlocks real earned badges.
  */
-import { getStoredItem, setStoredItem } from './storageHelper';
+import { getStoredItem, setStoredItem } from './storageHelper.js';
 import { doc, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db } from '../firebase.js';
 
 const ACHIEVEMENTS_LIST = [
   {
@@ -14,9 +14,9 @@ const ACHIEVEMENTS_LIST = [
     category: 'Goals',
     icon: 'Target',
     xpReward: 100,
-    isUnlocked: true,
-    unlockedAt: '2026-01-15',
-    progress: 100,
+    isUnlocked: false,
+    unlockedAt: null,
+    progress: 0,
   },
   {
     id: 'ach_7day_streak',
@@ -25,9 +25,9 @@ const ACHIEVEMENTS_LIST = [
     category: 'Consistency',
     icon: 'Flame',
     xpReward: 350,
-    isUnlocked: true,
-    unlockedAt: '2026-02-01',
-    progress: 100,
+    isUnlocked: false,
+    unlockedAt: null,
+    progress: 0,
   },
   {
     id: 'ach_10_workouts',
@@ -36,9 +36,9 @@ const ACHIEVEMENTS_LIST = [
     category: 'Fitness',
     icon: 'Dumbbell',
     xpReward: 500,
-    isUnlocked: true,
-    unlockedAt: '2026-02-14',
-    progress: 100,
+    isUnlocked: false,
+    unlockedAt: null,
+    progress: 0,
   },
   {
     id: 'ach_first_week_track',
@@ -47,9 +47,9 @@ const ACHIEVEMENTS_LIST = [
     category: 'Habits',
     icon: 'Calendar',
     xpReward: 300,
-    isUnlocked: true,
-    unlockedAt: '2026-02-20',
-    progress: 100,
+    isUnlocked: false,
+    unlockedAt: null,
+    progress: 0,
   },
   {
     id: 'ach_nutrition_streak',
@@ -60,7 +60,7 @@ const ACHIEVEMENTS_LIST = [
     xpReward: 400,
     isUnlocked: false,
     unlockedAt: null,
-    progress: 60, // 3/5
+    progress: 0,
   },
   {
     id: 'ach_challenge_winner',
@@ -71,7 +71,7 @@ const ACHIEVEMENTS_LIST = [
     xpReward: 600,
     isUnlocked: false,
     unlockedAt: null,
-    progress: 40,
+    progress: 0,
   },
   {
     id: 'ach_century_club',
@@ -82,13 +82,20 @@ const ACHIEVEMENTS_LIST = [
     xpReward: 1000,
     isUnlocked: false,
     unlockedAt: null,
-    progress: 34, // 34/100
+    progress: 0,
   },
 ];
 
 export const gamificationService = {
   getAchievements(uid) {
-    return getStoredItem(`achievements_${uid || 'guest'}`, ACHIEVEMENTS_LIST);
+    const list = getStoredItem(`achievements_${uid || 'guest'}`, ACHIEVEMENTS_LIST);
+    // Sanitize any legacy demo achievements that had fake pre-unlocked dates
+    return (list || ACHIEVEMENTS_LIST).map((ach) => {
+      if (ach.unlockedAt === '2026-01-15' || ach.unlockedAt === '2026-02-01' || ach.unlockedAt === '2026-02-14' || ach.unlockedAt === '2026-02-20') {
+        return { ...ach, isUnlocked: false, unlockedAt: null, progress: 0 };
+      }
+      return ach;
+    });
   },
 
   calculateLevel(totalXp = 0) {

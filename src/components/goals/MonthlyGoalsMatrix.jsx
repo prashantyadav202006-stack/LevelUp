@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Clock, Plus, Trash2, ChevronDown } from 'lucide-react';
+import { Clock, Plus, Trash2, ChevronDown, Target } from 'lucide-react';
 import { goalsService } from '../../services/goalsService';
 import { sfx } from '../../utils/soundEngine';
 
@@ -41,12 +41,30 @@ export default function MonthlyGoalsMatrix({
   const [quickCategory, setQuickCategory] = useState('Health');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Local optimistic logs state
-  const [localLogs, setLocalLogs] = useState(dailyLogs || {});
+  // Local optimistic logs state (excluding any legacy demo goal IDs)
+  const [localLogs, setLocalLogs] = useState(() => {
+    const cleaned = {};
+    if (dailyLogs) {
+      Object.entries(dailyLogs).forEach(([k, v]) => {
+        if (Array.isArray(v)) {
+          const filtered = v.filter((id) => id !== 'goal_wake_up' && id !== 'goal_drink_3l');
+          if (filtered.length > 0) cleaned[k] = filtered;
+        }
+      });
+    }
+    return cleaned;
+  });
 
   useEffect(() => {
-    if (dailyLogs && Object.keys(dailyLogs).length > 0) {
-      setLocalLogs(dailyLogs);
+    if (dailyLogs) {
+      const cleaned = {};
+      Object.entries(dailyLogs).forEach(([k, v]) => {
+        if (Array.isArray(v)) {
+          const filtered = v.filter((id) => id !== 'goal_wake_up' && id !== 'goal_drink_3l');
+          if (filtered.length > 0) cleaned[k] = filtered;
+        }
+      });
+      setLocalLogs(cleaned);
     }
   }, [dailyLogs]);
 
@@ -64,24 +82,9 @@ export default function MonthlyGoalsMatrix({
     return `${year}-${mStr}-${dStr}`;
   };
 
-  // Default fallback starter goals matching the user's reference screenshot
+  // Only display genuine user-created goals (clean slate for user data)
   const displayGoals = useMemo(() => {
-    if (goals && goals.length > 0) {
-      return goals;
-    }
-    // Seed initial goals from the screenshot if user has none yet
-    return [
-      {
-        id: 'goal_wake_up',
-        title: 'wake up',
-        category: 'Health',
-      },
-      {
-        id: 'goal_drink_3l',
-        title: 'druink 3 l',
-        category: 'Health',
-      },
-    ];
+    return (goals || []).filter((g) => g.id !== 'goal_wake_up' && g.id !== 'goal_drink_3l');
   }, [goals]);
 
   // Notify parent of active display goals
@@ -90,25 +93,6 @@ export default function MonthlyGoalsMatrix({
       onActiveGoalsChange(displayGoals);
     }
   }, [displayGoals, onActiveGoalsChange]);
-
-  // If localLogs is empty and we are showing initial starter goals, seed the checked days from reference image
-  useEffect(() => {
-    if (Object.keys(localLogs).length === 0 && (!goals || goals.length === 0)) {
-      const seeded = {};
-      // wake up checked on days 7, 9, 13
-      [7, 9, 13].forEach((day) => {
-        const key = getDateKey(day);
-        seeded[key] = [...(seeded[key] || []), 'goal_wake_up'];
-      });
-      // druink 3 l checked on days 6, 13, 16, 19
-      [6, 13, 16, 19].forEach((day) => {
-        const key = getDateKey(day);
-        seeded[key] = [...(seeded[key] || []), 'goal_drink_3l'];
-      });
-      setLocalLogs(seeded);
-      if (onLogsChange) onLogsChange(seeded);
-    }
-  }, [goals]);
 
   // Calculate days to display based on viewMode ('week' or 'month')
   const displayedDays = useMemo(() => {
@@ -376,7 +360,51 @@ export default function MonthlyGoalsMatrix({
               </tr>
             </thead>
             <tbody>
-              {displayGoals.map((goal) => {
+              {displayGoals.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={displayedDays.length + 1}
+                    style={{
+                      textAlign: 'center',
+                      padding: '3.5rem 1.5rem',
+                      color: '#94a3b8',
+                      background: 'rgba(19, 21, 31, 0.45)',
+                    }}
+                  >
+                    <Target
+                      size={34}
+                      style={{
+                        color: '#00f2cb',
+                        margin: '0 auto 0.75rem',
+                        display: 'block',
+                        opacity: 0.85,
+                      }}
+                    />
+                    <div
+                      style={{
+                        fontWeight: '700',
+                        color: '#f1f5f9',
+                        marginBottom: '0.4rem',
+                        fontSize: '0.98rem',
+                      }}
+                    >
+                      No Routine Goals in Monthly Matrix
+                    </div>
+                    <div
+                      style={{
+                        fontSize: '0.85rem',
+                        color: '#94a3b8',
+                        maxWidth: '460px',
+                        margin: '0 auto',
+                        lineHeight: '1.5',
+                      }}
+                    >
+                      Type your daily routine or habit in the input bar above (e.g. <em>Morning Workout</em>, <em>Read 20 mins</em>, <em>Drink 3L Water</em>) and click <strong>Add Goal</strong> to start tracking!
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                displayGoals.map((goal) => {
                 const completedCount = getGoalMonthCompletions(goal.id);
                 const isSelectedGoal = selectedGoalId === goal.id;
                 return (
@@ -450,7 +478,7 @@ export default function MonthlyGoalsMatrix({
                     })}
                   </tr>
                 );
-              })}
+              }))}
             </tbody>
           </table>
         </div>

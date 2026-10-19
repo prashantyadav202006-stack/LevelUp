@@ -23,16 +23,17 @@ export default function GoogleOnboardingModal({
   const [visibility, setVisibility] = useState('public');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Initialize form fields matching the user's reference picture and Google profile data
+  // Initialize form fields matching the user's authentic Google profile data
   useEffect(() => {
     if (currentUser) {
-      const defaultName = currentUser.displayName || 'Prashant Yadav';
+      const defaultName =
+        currentUser.displayName || (currentUser.email ? currentUser.email.split('@')[0] : 'Athlete');
       setDisplayName(defaultName);
 
       const generatedUsername =
         currentUser.username ||
-        defaultName.toLowerCase().replace(/\s+/g, '_') ||
-        'prashant_beast';
+        defaultName.toLowerCase().replace(/[^a-z0-9_]/g, '_') ||
+        'athlete';
       setUsername(generatedUsername);
 
       if (currentUser.targets) {
@@ -61,8 +62,8 @@ export default function GoogleOnboardingModal({
         setVisibility(currentUser.settings.visibility || 'public');
       }
     } else {
-      setDisplayName('Prashant Yadav');
-      setUsername('prashant_beast');
+      setDisplayName('Athlete');
+      setUsername('athlete');
       setTargets({
         calories: 2600,
         protein: 165,
@@ -86,8 +87,8 @@ export default function GoogleOnboardingModal({
 
     try {
       await onSave({
-        displayName: displayName.trim() || 'Prashant Yadav',
-        username: username.trim() || 'prashant_beast',
+        displayName: displayName.trim() || 'Athlete',
+        username: username.trim() || 'athlete',
         calories: targets.calories,
         protein: targets.protein,
         carbs: targets.carbs,
@@ -188,7 +189,7 @@ export default function GoogleOnboardingModal({
                 <input
                   type="text"
                   className="onboarding-input"
-                  placeholder="e.g. prashant_beast"
+                  placeholder="e.g. athlete_prime"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   required

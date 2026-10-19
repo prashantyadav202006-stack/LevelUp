@@ -37,25 +37,6 @@ import { getTodayDateKey, formatDateDisplay } from '../services/storageHelper';
 import { sfx } from '../utils/soundEngine';
 import MonthlyGoalsMatrix from '../components/goals/MonthlyGoalsMatrix';
 
-// Default starter logs matching the matrix reference image
-const getInitialStarterLogs = () => {
-  const now = new Date();
-  const yr = now.getFullYear();
-  const mo = String(now.getMonth() + 1).padStart(2, '0');
-  const seeded = {};
-  [7, 9, 13].forEach((day) => {
-    const dStr = String(day).padStart(2, '0');
-    const key = `${yr}-${mo}-${dStr}`;
-    seeded[key] = [...(seeded[key] || []), 'goal_wake_up'];
-  });
-  [6, 13, 16, 19].forEach((day) => {
-    const dStr = String(day).padStart(2, '0');
-    const key = `${yr}-${mo}-${dStr}`;
-    seeded[key] = [...(seeded[key] || []), 'goal_drink_3l'];
-  });
-  return seeded;
-};
-
 // Rich Interactive Tooltip for Matrix Goal Completion Bar Chart
 const MatrixChartTooltip = ({ active, payload }) => {
   if (active && payload && payload.length) {
@@ -174,7 +155,7 @@ export default function OverviewPage({ onOpenAddGoal, onNavigate }) {
   const { currentUser, awardXp } = useAuth();
   const [goals, setGoals] = useState([]);
   const [completedGoalIds, setCompletedGoalIds] = useState([]);
-  const [allDailyLogs, setAllDailyLogs] = useState(() => getInitialStarterLogs());
+  const [allDailyLogs, setAllDailyLogs] = useState({});
   const [nutritionTotals, setNutritionTotals] = useState(null);
   const [streaks, setStreaks] = useState({ currentStreak: 0, bestStreak: 0 });
   const [loading, setLoading] = useState(true);
@@ -204,7 +185,8 @@ export default function OverviewPage({ onOpenAddGoal, onNavigate }) {
     const unsubscribeGoals = goalsService.subscribeToGoals(
       currentUser.uid,
       (liveGoals) => {
-        const activeGoals = (liveGoals || []).filter((g) => g.status !== 'paused');
+        const activeGoals = (liveGoals || [])
+          .filter((g) => g.status !== 'paused' && g.id !== 'goal_wake_up' && g.id !== 'goal_drink_3l');
         setGoals(activeGoals);
         setLoading(false);
         const streakData = goalsService.calculateStreaks(currentUser.uid);
@@ -217,10 +199,20 @@ export default function OverviewPage({ onOpenAddGoal, onNavigate }) {
 
     // 3. Load today's completed goals from users/{uid}/dailyLogs/{todayKey}
     goalsService.getDailyLog(currentUser.uid, todayKey).then((dayLogs) => {
-      setCompletedGoalIds(dayLogs || []);
+      const cleanDayLogs = (dayLogs || []).filter((id) => id !== 'goal_wake_up' && id !== 'goal_drink_3l');
+      setCompletedGoalIds(cleanDayLogs);
       const logs = goalsService.getAllDailyLogs(currentUser.uid);
       if (logs && Object.keys(logs).length > 0) {
-        setAllDailyLogs(logs);
+        const cleaned = {};
+        Object.entries(logs).forEach(([k, v]) => {
+          if (Array.isArray(v)) {
+            const f = v.filter((id) => id !== 'goal_wake_up' && id !== 'goal_drink_3l');
+            if (f.length > 0) cleaned[k] = f;
+          }
+        });
+        setAllDailyLogs(cleaned);
+      } else {
+        setAllDailyLogs({});
       }
     });
 
@@ -262,17 +254,18 @@ export default function OverviewPage({ onOpenAddGoal, onNavigate }) {
   const progressPct = totalGoalsCount > 0 ? Math.round((completedCount / totalGoalsCount) * 100) : 0;
   const isAllCompleted = totalGoalsCount > 0 && completedCount === totalGoalsCount;
 
-  // Level & XP
-  const levelInfo = gamificationService.calculateLevel(currentUser?.xp || 2450);
+  // Level & XP (Calculated purely from real user XP)
+  const levelInfo = gamificationService.calculateLevel(currentUser?.xp ?? 0);
 
   // Effective active goals across dashboard and matrix
   const effectiveGoals = useMemo(() => {
-    if (goals && goals.length > 0) return goals;
-    if (activeMatrixGoals && activeMatrixGoals.length > 0) return activeMatrixGoals;
-    return [
-      { id: 'goal_wake_up', title: 'wake up', category: 'Health' },
-      { id: 'goal_drink_3l', title: 'druink 3 l', category: 'Health' },
-    ];
+    if (goals && goals.length > 0) {
+      return goals.filter((g) => g.id !== 'goal_wake_up' && g.id !== 'goal_drink_3l');
+    }
+    if (activeMatrixGoals && activeMatrixGoals.length > 0) {
+      return activeMatrixGoals.filter((g) => g.id !== 'goal_wake_up' && g.id !== 'goal_drink_3l');
+    }
+    return [];
   }, [goals, activeMatrixGoals]);
 
   // Selected goal object if filtered
@@ -321,7 +314,7 @@ export default function OverviewPage({ onOpenAddGoal, onNavigate }) {
       const pendingGoalsList = targetGoals.filter((g) => !logsForDate.includes(g.id));
       const completedCount = completedGoalsList.length;
 
-      const rate = Math.round((completedCount / scheduledCount) * 100);
+      const rate = targetGoals.length > 0 ? Math.round((completedCount / scheduledCount) * 100) : 0;
 
       return {
         day: matrixViewMode === 'week' ? `${dayNum} ${dayName}` : `${dayNum}`,
@@ -330,7 +323,7 @@ export default function OverviewPage({ onOpenAddGoal, onNavigate }) {
         dateKey,
         formattedDate: `Oct ${dayNum}, ${curYear} (${dayName})`,
         completed: completedCount,
-        scheduled: scheduledCount,
+        scheduled: targetGoals.length,
         rate,
         isToday: dayNum === curTodayNum,
         isSelected: matrixSelectedDay === dayNum,
@@ -361,6 +354,7 @@ export default function OverviewPage({ onOpenAddGoal, onNavigate }) {
     const scheduledCount = Math.max(1, targetGoals.length);
 
     const getDayRate = (dayNum) => {
+      if (targetGoals.length === 0) return 0;
       const mStr = String(curMonth + 1).padStart(2, '0');
       const dStr = String(dayNum).padStart(2, '0');
       const dateKey = `${curYear}-${mStr}-${dStr}`;
@@ -414,7 +408,8 @@ export default function OverviewPage({ onOpenAddGoal, onNavigate }) {
 
   // Trend Growth calculation
   const trendGrowth = useMemo(() => {
-    if (!matrixTrendChartData || matrixTrendChartData.length < 2) return '+14% Growth';
+    if (effectiveGoals.length === 0) return '0% Momentum';
+    if (!matrixTrendChartData || matrixTrendChartData.length < 2) return '0% Momentum';
     const firstScore = matrixTrendChartData[0]?.score || 0;
     const lastActive =
       matrixTrendChartData.slice().reverse().find((d) => d.score > 0) ||
@@ -423,7 +418,7 @@ export default function OverviewPage({ onOpenAddGoal, onNavigate }) {
     if (diff > 0) return `+${diff}% Momentum`;
     if (diff < 0) return `${diff}% Momentum`;
     return '100% Consistent';
-  }, [matrixTrendChartData]);
+  }, [matrixTrendChartData, effectiveGoals]);
 
   // Helper for Category Icons
   const getCategoryIcon = (category) => {
@@ -507,17 +502,17 @@ export default function OverviewPage({ onOpenAddGoal, onNavigate }) {
           <div className="card-center-metric">
             <div className="metric-details full-width">
               <div className="metric-number-row">
-                <span className="metric-primary">{nutritionTotals?.consumed.calories || 1380}</span>
-                <span className="metric-target">/ {nutritionTotals?.targets.calories || 2600} kcal</span>
+                <span className="metric-primary">{nutritionTotals?.consumed?.calories ?? 0}</span>
+                <span className="metric-target">/ {nutritionTotals?.targets?.calories ?? (currentUser?.targets?.calories ?? 2600)} kcal</span>
               </div>
               <div className="bar-track">
                 <div
                   className="bar-fill cyan"
-                  style={{ width: `${nutritionTotals?.caloriesPct || 53}%` }}
+                  style={{ width: `${nutritionTotals?.caloriesPct ?? 0}%` }}
                 />
               </div>
               <span className="metric-caption">
-                {nutritionTotals?.remainingCalories || 1220} kcal remaining today
+                {nutritionTotals?.remainingCalories ?? (currentUser?.targets?.calories ?? 2600)} kcal remaining today
               </span>
             </div>
           </div>
@@ -532,17 +527,17 @@ export default function OverviewPage({ onOpenAddGoal, onNavigate }) {
           <div className="card-center-metric">
             <div className="metric-details full-width">
               <div className="metric-number-row">
-                <span className="metric-primary">{nutritionTotals?.consumed.protein || 117}g</span>
-                <span className="metric-target">/ {nutritionTotals?.targets.protein || 165}g</span>
+                <span className="metric-primary">{nutritionTotals?.consumed?.protein ?? 0}g</span>
+                <span className="metric-target">/ {nutritionTotals?.targets?.protein ?? (currentUser?.targets?.protein ?? 165)}g</span>
               </div>
               <div className="bar-track">
                 <div
                   className="bar-fill green"
-                  style={{ width: `${nutritionTotals?.proteinPct || 71}%` }}
+                  style={{ width: `${nutritionTotals?.proteinPct ?? 0}%` }}
                 />
               </div>
               <span className="metric-caption">
-                {nutritionTotals?.proteinPct || 71}% of daily protein goal met
+                {nutritionTotals?.proteinPct ?? 0}% of daily protein goal met
               </span>
             </div>
           </div>
@@ -558,7 +553,7 @@ export default function OverviewPage({ onOpenAddGoal, onNavigate }) {
             <div className="metric-details full-width">
               <div className="metric-number-row">
                 <span className="metric-primary">LVL {levelInfo.level}</span>
-                <span className="metric-target">{currentUser?.xp || 2450} XP</span>
+                <span className="metric-target">{currentUser?.xp ?? 0} XP</span>
               </div>
               <div className="bar-track">
                 <div

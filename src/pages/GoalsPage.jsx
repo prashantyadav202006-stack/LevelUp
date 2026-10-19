@@ -59,7 +59,10 @@ export default function GoalsPage({ onOpenAddGoal, onEditGoal }) {
     const unsubscribeGoals = goalsService.subscribeToGoals(
       currentUser.uid,
       (liveGoals) => {
-        setGoals(liveGoals);
+        const cleanGoals = (liveGoals || []).filter(
+          (g) => g.id !== 'goal_wake_up' && g.id !== 'goal_drink_3l'
+        );
+        setGoals(cleanGoals);
         setLoading(false);
         setFirestoreError(null);
         const streakData = goalsService.calculateStreaks(currentUser.uid);

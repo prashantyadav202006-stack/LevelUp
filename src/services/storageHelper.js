@@ -6,6 +6,7 @@
 
 export const getStoredItem = (key, fallback) => {
   try {
+    if (typeof localStorage === 'undefined') return fallback;
     const raw = localStorage.getItem(`levelup_${key}`);
     return raw ? JSON.parse(raw) : fallback;
   } catch (err) {
@@ -16,6 +17,7 @@ export const getStoredItem = (key, fallback) => {
 
 export const setStoredItem = (key, value) => {
   try {
+    if (typeof localStorage === 'undefined') return;
     localStorage.setItem(`levelup_${key}`, JSON.stringify(value));
   } catch (err) {
     console.warn('Storage write error for key:', key, err);

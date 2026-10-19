@@ -10,49 +10,8 @@ import {
   deleteDoc,
   serverTimestamp,
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from '../firebase';
-import { getStoredItem, setStoredItem, getTodayDateKey } from './storageHelper';
-
-const INITIAL_WORKOUTS = [
-  {
-    id: 'wo_1',
-    title: 'Heavy Push & Triceps Burnout',
-    type: 'Strength',
-    duration: 55, // minutes
-    caloriesBurned: 420,
-    notes: 'Bench press 4x8 @ 85kg, Incline DB press 3x10 @ 30kg, Cable flyes & skull crushers',
-    date: getTodayDateKey(),
-    createdAt: '07:30 AM',
-  },
-  {
-    id: 'wo_2',
-    title: 'Zone 2 Cardio & Core Stability',
-    type: 'Cardio',
-    duration: 40,
-    caloriesBurned: 310,
-    notes: 'Incline treadmill walk @ 5.8 km/h, 15% incline + plank tabata',
-    date: '2026-10-17',
-    createdAt: '06:45 PM',
-  },
-  {
-    id: 'wo_3',
-    title: 'Leg Hypertrophy & Squats',
-    type: 'Strength',
-    duration: 65,
-    caloriesBurned: 540,
-    notes: 'Barbell back squat 5x5 @ 120kg, Romanian deadlifts 4x10, Bulgarian split squats',
-    date: '2026-10-15',
-    createdAt: '08:00 AM',
-  },
-];
-
-const INITIAL_WEIGHT_LOGS = [
-  { id: 'wt_1', weight: 78.4, date: '2026-10-01' },
-  { id: 'wt_2', weight: 78.1, date: '2026-10-05' },
-  { id: 'wt_3', weight: 77.8, date: '2026-10-10' },
-  { id: 'wt_4', weight: 77.5, date: '2026-10-14' },
-  { id: 'wt_5', weight: 77.2, date: getTodayDateKey() },
-];
+import { db, isFirebaseConfigured } from '../firebase.js';
+import { getStoredItem, setStoredItem, getTodayDateKey } from './storageHelper.js';
 
 export const fitnessService = {
   // WORKOUTS
@@ -62,13 +21,15 @@ export const fitnessService = {
         const woColl = collection(db, 'users', uid, 'workouts');
         const snap = await getDocs(woColl);
         if (!snap.empty) {
-          return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          return list.filter((w) => !['wo_1', 'wo_2', 'wo_3'].includes(w.id));
         }
       } catch (e) {
         console.warn('Firestore getWorkouts error:', e);
       }
     }
-    return getStoredItem(`workouts_${uid || 'guest'}`, INITIAL_WORKOUTS);
+    const local = getStoredItem(`workouts_${uid || 'guest'}`, []);
+    return (local || []).filter((w) => !['wo_1', 'wo_2', 'wo_3'].includes(w.id));
   },
 
   async logWorkout(uid, workoutData) {
@@ -117,9 +78,7 @@ export const fitnessService = {
 
   // WATER INTAKE TRACKER
   getWaterLog(uid, dateKey = getTodayDateKey()) {
-    const allWater = getStoredItem(`water_${uid || 'guest'}`, {
-      [getTodayDateKey()]: 2250, // ml
-    });
+    const allWater = getStoredItem(`water_${uid || 'guest'}`, {});
     return allWater[dateKey] || 0;
   },
 
@@ -148,9 +107,7 @@ export const fitnessService = {
 
   // DAILY STEPS TRACKER
   getStepsLog(uid, dateKey = getTodayDateKey()) {
-    const allSteps = getStoredItem(`steps_${uid || 'guest'}`, {
-      [getTodayDateKey()]: 7840,
-    });
+    const allSteps = getStoredItem(`steps_${uid || 'guest'}`, {});
     return allSteps[dateKey] || 0;
   },
 
@@ -177,7 +134,8 @@ export const fitnessService = {
 
   // BODY WEIGHT LOGS
   getWeightLogs(uid) {
-    return getStoredItem(`weights_${uid || 'guest'}`, INITIAL_WEIGHT_LOGS);
+    const local = getStoredItem(`weights_${uid || 'guest'}`, []);
+    return (local || []).filter((w) => !['wt_1', 'wt_2', 'wt_3', 'wt_4', 'wt_5'].includes(w.id));
   },
 
   async logWeight(uid, weightVal, dateKey = getTodayDateKey()) {

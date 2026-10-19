@@ -31,8 +31,8 @@ const WORKOUT_TYPES = ['Strength', 'Cardio', 'HIIT', 'Running', 'Mobility', 'Cus
 export default function FitnessPage() {
   const { currentUser, awardXp } = useAuth();
   const [workouts, setWorkouts] = useState([]);
-  const [waterAmount, setWaterAmount] = useState(2250);
-  const [stepsCount, setStepsCount] = useState(7840);
+  const [waterAmount, setWaterAmount] = useState(0);
+  const [stepsCount, setStepsCount] = useState(0);
   const [weightLogs, setWeightLogs] = useState([]);
   const [showWorkoutModal, setShowWorkoutModal] = useState(false);
   const [showWeightModal, setShowWeightModal] = useState(false);
@@ -217,9 +217,13 @@ export default function FitnessPage() {
             <div className="metric-details full-width">
               <div className="metric-number-row">
                 <span className="metric-primary">
-                  {weightLogs.length > 0 ? `${weightLogs[weightLogs.length - 1].weight} kg` : '77.2 kg'}
+                  {weightLogs.length > 0 ? `${weightLogs[weightLogs.length - 1].weight} kg` : '-- kg'}
                 </span>
-                <span className="metric-target">Trend: -1.2 kg this month</span>
+                <span className="metric-target">
+                  {weightLogs.length > 1
+                    ? `Trend: ${(weightLogs[weightLogs.length - 1].weight - weightLogs[0].weight).toFixed(1)} kg`
+                    : 'Log weight to track trend'}
+                </span>
               </div>
               <div className="sparkline-wrap">
                 <ResponsiveContainer width="100%" height={50}>

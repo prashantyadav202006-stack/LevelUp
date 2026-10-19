@@ -10,8 +10,8 @@ import {
   deleteDoc,
   serverTimestamp,
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from '../firebase';
-import { getStoredItem, setStoredItem, getTodayDateKey } from './storageHelper';
+import { db, isFirebaseConfigured } from '../firebase.js';
+import { getStoredItem, setStoredItem, getTodayDateKey } from './storageHelper.js';
 
 // Verified Healthy Food Database for instant search & logging
 export const FOOD_DATABASE = [
@@ -34,73 +34,15 @@ export const FOOD_DATABASE = [
 export const nutritionService = {
   // Get all meal logs for a specific date
   async getDayLogs(uid, dateKey = getTodayDateKey()) {
-    const today = getTodayDateKey();
-    const defaultSampleLogs = [
-      {
-        id: 'log_sample_1',
-        name: 'Rolled Oats with Chia Seeds & Berries',
-        mealType: 'breakfast', // breakfast, lunch, dinner, snacks
-        serving: '1 bowl (120g)',
-        quantity: 1,
-        calories: 420,
-        protein: 18,
-        carbs: 68,
-        fats: 8,
-        date: today,
-        createdAt: '08:15 AM',
-      },
-      {
-        id: 'log_sample_2',
-        name: 'Whey Protein Isolate Shake',
-        mealType: 'breakfast',
-        serving: '1 scoop with water',
-        quantity: 1,
-        calories: 120,
-        protein: 25,
-        carbs: 2,
-        fats: 1,
-        date: today,
-        createdAt: '09:00 AM',
-      },
-      {
-        id: 'log_sample_3',
-        name: 'Grilled Chicken Breast with Brown Rice',
-        mealType: 'lunch',
-        serving: '200g chicken + 150g rice',
-        quantity: 1,
-        calories: 580,
-        protein: 52,
-        carbs: 45,
-        fats: 8,
-        date: today,
-        createdAt: '01:30 PM',
-      },
-      {
-        id: 'log_sample_4',
-        name: 'Greek Yogurt with Almonds & Honey',
-        mealType: 'snacks',
-        serving: '1 bowl',
-        quantity: 1,
-        calories: 260,
-        protein: 22,
-        carbs: 18,
-        fats: 9,
-        date: today,
-        createdAt: '05:00 PM',
-      },
-    ];
-
-    const allLogs = getStoredItem(`foodLogs_${uid || 'guest'}`, {
-      [today]: defaultSampleLogs,
-    });
-
     if (db && isFirebaseConfigured && uid) {
       try {
         const foodColl = collection(db, 'users', uid, 'foodLogs');
         const snap = await getDocs(foodColl);
         if (!snap.empty) {
           const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-          const filtered = list.filter((item) => item.date === dateKey);
+          const filtered = list.filter(
+            (item) => item.date === dateKey && !item.id?.startsWith('log_sample_')
+          );
           if (filtered.length > 0) return filtered;
         }
       } catch (e) {
@@ -108,7 +50,9 @@ export const nutritionService = {
       }
     }
 
-    return allLogs[dateKey] || [];
+    const allLogs = getStoredItem(`foodLogs_${uid || 'guest'}`, {});
+    const dayEntries = allLogs[dateKey] || [];
+    return dayEntries.filter((item) => !item.id?.startsWith('log_sample_'));
   },
 
   // Add a new food entry
@@ -190,7 +134,7 @@ export const nutritionService = {
 
   // Save Favorite Foods
   getFavorites(uid) {
-    return getStoredItem(`favorites_${uid || 'guest'}`, FOOD_DATABASE.slice(0, 5));
+    return getStoredItem(`favorites_${uid || 'guest'}`, []);
   },
 
   toggleFavorite(uid, food) {

@@ -2,7 +2,7 @@
  * Social Competition & Friends Service
  * Manages fair leaderboards, friend requests, and athletic community challenges
  */
-import { getStoredItem, setStoredItem } from './storageHelper';
+import { getStoredItem, setStoredItem } from './storageHelper.js';
 
 const INITIAL_FRIENDS = [
   {
@@ -171,8 +171,8 @@ const INITIAL_CHALLENGES = [
     participantsCount: 142,
     rewardXp: 500,
     badgeReward: 'Unstoppable Titan',
-    isJoined: true,
-    userProgress: 85, // percentage
+    isJoined: false,
+    userProgress: 0,
   },
   {
     id: 'ch_5_workouts',
@@ -184,8 +184,8 @@ const INITIAL_CHALLENGES = [
     participantsCount: 98,
     rewardXp: 400,
     badgeReward: 'Iron Beast',
-    isJoined: true,
-    userProgress: 40,
+    isJoined: false,
+    userProgress: 0,
   },
   {
     id: 'ch_10k_steps',
@@ -204,7 +204,7 @@ const INITIAL_CHALLENGES = [
 
 const GLOBAL_LEADERBOARD = [
   {
-    rank: 1,
+    id: 'user_viktor',
     username: 'viktor_titan',
     displayName: 'Viktor Kane',
     avatar: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=150&auto=format&fit=crop&q=80',
@@ -215,7 +215,7 @@ const GLOBAL_LEADERBOARD = [
     badge: '🏆 Champion',
   },
   {
-    rank: 2,
+    id: 'user_maya',
     username: 'maya_crossfit',
     displayName: 'Maya Lin',
     avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80',
@@ -226,7 +226,7 @@ const GLOBAL_LEADERBOARD = [
     badge: '🥈 Master',
   },
   {
-    rank: 3,
+    id: 'user_alex',
     username: 'alex_iron',
     displayName: 'Alex Mercer',
     avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
@@ -237,7 +237,7 @@ const GLOBAL_LEADERBOARD = [
     badge: '🥉 Elite',
   },
   {
-    rank: 4,
+    id: 'user_sophia',
     username: 'sophia_lift',
     displayName: 'Sophia Sterling',
     avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
@@ -248,19 +248,7 @@ const GLOBAL_LEADERBOARD = [
     badge: '⚡ Pro',
   },
   {
-    rank: 5,
-    username: 'prashant_beast',
-    displayName: 'Prashant Yadav (You)',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-    xp: 2450,
-    level: 5,
-    goalsCompleted: 34,
-    currentStreak: 6,
-    isCurrentUser: true,
-    badge: '🔥 Rising',
-  },
-  {
-    rank: 6,
+    id: 'user_rohan',
     username: 'rohan_sprint',
     displayName: 'Rohan Sharma',
     avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
@@ -271,7 +259,7 @@ const GLOBAL_LEADERBOARD = [
     badge: '⚡ Pro',
   },
   {
-    rank: 7,
+    id: 'user_marcus',
     username: 'marcus_v',
     displayName: 'Marcus Vance',
     avatar: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=150&auto=format&fit=crop&q=80',
@@ -438,7 +426,43 @@ export const socialService = {
   },
 
   // LEADERBOARDS
-  getLeaderboard(period = 'weekly', filter = 'global') {
-    return GLOBAL_LEADERBOARD;
+  getLeaderboard(period = 'weekly', filter = 'global', currentUser = null) {
+    let list = [...GLOBAL_LEADERBOARD];
+
+    if (currentUser?.uid) {
+      const userDisplay =
+        currentUser.displayName || (currentUser.email ? currentUser.email.split('@')[0] : 'Athlete');
+      const userEntry = {
+        id: currentUser.uid,
+        username: currentUser.username || userDisplay.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+        displayName: `${userDisplay} (You)`,
+        avatar:
+          currentUser.avatar ||
+          currentUser.photoURL ||
+          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+        xp: Number(currentUser.xp) || 0,
+        level: Number(currentUser.level) || 1,
+        goalsCompleted: Number(currentUser.goalsCompleted) || 0,
+        currentStreak: Number(currentUser.currentStreak) || 0,
+        isCurrentUser: true,
+        badge: (currentUser.xp || 0) >= 3000 ? '⚡ Pro' : '🔥 Rising',
+      };
+
+      if (filter === 'friends') {
+        const friends = this.getFriends(currentUser.uid);
+        const friendIds = new Set(friends.map((f) => f.id));
+        const friendsList = list.filter((u) => friendIds.has(u.id) || friendIds.has(u.username));
+        const combined = [userEntry, ...friendsList];
+        combined.sort((a, b) => (b.xp || 0) - (a.xp || 0));
+        return combined.map((item, idx) => ({ ...item, rank: idx + 1 }));
+      }
+
+      list.push(userEntry);
+    } else if (filter === 'friends') {
+      return [];
+    }
+
+    list.sort((a, b) => (b.xp || 0) - (a.xp || 0));
+    return list.map((item, idx) => ({ ...item, rank: idx + 1 }));
   },
 };

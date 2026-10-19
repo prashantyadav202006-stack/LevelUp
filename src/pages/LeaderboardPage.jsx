@@ -11,13 +11,15 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { socialService } from '../services/socialService';
+import { useAuth } from '../context/AuthContext';
 import { sfx } from '../utils/soundEngine';
 
 export default function LeaderboardPage() {
+  const { currentUser } = useAuth();
   const [period, setPeriod] = useState('weekly'); // daily, weekly, allTime
   const [filter, setFilter] = useState('global'); // global, friends
 
-  const leaderboardData = socialService.getLeaderboard(period, filter);
+  const leaderboardData = socialService.getLeaderboard(period, filter, currentUser);
   const top3 = leaderboardData.slice(0, 3);
   const restOfList = leaderboardData.slice(3);
 
