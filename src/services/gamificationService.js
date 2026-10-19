@@ -3,6 +3,8 @@
  * Calculates authentic XP points, levels, and unlocks real earned badges.
  */
 import { getStoredItem, setStoredItem } from './storageHelper';
+import { doc, setDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 
 const ACHIEVEMENTS_LIST = [
   {
@@ -106,12 +108,24 @@ export const gamificationService = {
     };
   },
 
-  addXp(uid, amount) {
-    const user = getStoredItem('active_user', { xp: 2450 });
+  addXp(uid, amount, currentUserObj) {
+    const user = currentUserObj || getStoredItem('active_user', null) || {};
     const updatedXp = (user.xp || 0) + amount;
     const { level } = this.calculateLevel(updatedXp);
     const updatedUser = { ...user, xp: updatedXp, level };
     setStoredItem('active_user', updatedUser);
+
+    if (db && uid) {
+      try {
+        const userRef = doc(db, 'users', uid);
+        setDoc(userRef, { xp: updatedXp, level }, { merge: true }).catch((err) => {
+          console.warn('[Firestore] Failed to update XP:', err);
+        });
+      } catch (err) {
+        console.warn('[Firestore] XP update error:', err);
+      }
+    }
+
     return updatedUser;
   },
 };

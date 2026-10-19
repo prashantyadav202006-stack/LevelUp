@@ -9,10 +9,11 @@ import ToastContainer from './components/ToastContainer';
 import DashboardLayout from './components/layout/DashboardLayout';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { getFriendlyAuthError } from './services/authService';
 import { sfx } from './utils/soundEngine';
 
 function AppContent() {
-  const { currentUser, signIn, signUp, signInWithGoogle, signInDemo } = useAuth();
+  const { currentUser, signIn, signUp, signInWithGoogle, resetPassword } = useAuth();
   const [authMode, setAuthMode] = useState('signin');
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
 
@@ -132,7 +133,7 @@ function AppContent() {
     try {
       const user = await signIn(signInData.signinEmail, signInData.signinPassword);
       setIsSignInLoading(false);
-      const displayName = user?.displayName || signInData.signinEmail.split('@')[0];
+      const displayName = user?.displayName || user?.email?.split('@')[0] || signInData.signinEmail.split('@')[0];
       setAuthenticatedAthlete(displayName);
       setIsWelcomeModalOpen(true);
       sfx.playSuccess();
@@ -140,7 +141,8 @@ function AppContent() {
     } catch (err) {
       setIsSignInLoading(false);
       sfx.playError();
-      showToast(err.message || 'Authentication failed. Please verify credentials.', 'error');
+      const friendlyMsg = getFriendlyAuthError(err);
+      showToast(friendlyMsg, 'error');
     }
   };
 
@@ -184,7 +186,7 @@ function AppContent() {
         signUpData.signupName
       );
       setIsSignUpLoading(false);
-      const name = user?.displayName || signUpData.signupName;
+      const name = user?.displayName || signUpData.signupName || user?.email?.split('@')[0];
       setAuthenticatedAthlete(name);
       setIsWelcomeModalOpen(true);
       sfx.playSuccess();
@@ -192,7 +194,8 @@ function AppContent() {
     } catch (err) {
       setIsSignUpLoading(false);
       sfx.playError();
-      showToast(err.message || 'Sign up error. Please try again.', 'error');
+      const friendlyMsg = getFriendlyAuthError(err);
+      showToast(friendlyMsg, 'error');
     }
   };
 
@@ -203,15 +206,16 @@ function AppContent() {
       sessionStorage.setItem('last_auth_provider', 'google');
       sessionStorage.setItem('prompt_google_onboarding', 'true');
       const user = await signInWithGoogle();
-      const name = user?.displayName || 'Google Athlete';
+      const name = user?.displayName || user?.email?.split('@')[0] || 'Athlete';
       setAuthenticatedAthlete(name);
       sfx.playSuccess();
       showToast(`Authenticated via ${provider}! ⚡`, 'success');
-    } catch {
-      sessionStorage.setItem('last_auth_provider', 'google');
-      sessionStorage.setItem('prompt_google_onboarding', 'true');
-      signInDemo();
-      sfx.playSuccess();
+    } catch (err) {
+      sessionStorage.removeItem('last_auth_provider');
+      sessionStorage.removeItem('prompt_google_onboarding');
+      sfx.playError();
+      const friendlyMsg = getFriendlyAuthError(err);
+      showToast(friendlyMsg, 'error');
     }
   };
 
@@ -277,10 +281,16 @@ function AppContent() {
       <ForgotPasswordModal
         isOpen={isForgotModalOpen}
         onClose={() => setIsForgotModalOpen(false)}
-        onSubmitEmail={(email) => {
-          sfx.playSuccess();
-          showToast(`One-time authentication link dispatched to ${email}! 🚀`, 'success');
-          setIsForgotModalOpen(false);
+        onSubmitEmail={async (email) => {
+          try {
+            await resetPassword(email);
+            sfx.playSuccess();
+            showToast(`Password reset link dispatched to ${email}! 🚀`, 'success');
+            setIsForgotModalOpen(false);
+          } catch (err) {
+            sfx.playError();
+            showToast(getFriendlyAuthError(err), 'error');
+          }
         }}
         initialEmail={signInData.signinEmail}
       />

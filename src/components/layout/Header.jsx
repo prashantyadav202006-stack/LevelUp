@@ -23,7 +23,7 @@ export default function Header({ onOpenAddGoal, onToggleMobileNav }) {
     return 'Good evening';
   };
 
-  // Formatted date
+  // Formatted date (Desktop full format)
   const todayFormatted = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'short',
@@ -31,11 +31,19 @@ export default function Header({ onOpenAddGoal, onToggleMobileNav }) {
     year: 'numeric',
   });
 
-  const randomQuote = MOTIVATIONAL_QUOTES[new Date().getDay() % MOTIVATIONAL_QUOTES.length];
-  const firstName = currentUser?.displayName ? currentUser.displayName.split(' ')[0] : 'Athlete';
+  // Formatted date (Mobile compact format)
+  const todayCompact = new Date().toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+
+  const firstName = currentUser?.displayName
+    ? currentUser.displayName.split(' ')[0]
+    : (currentUser?.email ? currentUser.email.split('@')[0] : 'Athlete');
 
   return (
-    <header className="dashboard-header">
+    <header className="dashboard-header" role="banner">
       <div className="header-left">
         {/* Mobile Hamburger Menu Toggle */}
         <button
@@ -44,17 +52,19 @@ export default function Header({ onOpenAddGoal, onToggleMobileNav }) {
           onClick={onToggleMobileNav}
           aria-label="Open mobile navigation"
         >
-          <Menu size={22} />
+          <Menu size={20} />
         </button>
 
         <div className="greeting-block">
           <h1 className="greeting-title">
-            {getGreeting()}, <span className="greeting-name">{firstName}</span> ⚡
+            <span className="greeting-prefix">{getGreeting()}, </span>
+            <span className="greeting-name">{firstName}</span> ⚡
           </h1>
           <div className="greeting-sub">
-            <span className="current-date-pill">{todayFormatted}</span>
-            <span className="quote-divider">•</span>
-            <span className="quote-text">"{randomQuote}"</span>
+            <span className="current-date-pill desktop-only">{todayFormatted}</span>
+            <span className="current-date-pill mobile-only">{todayCompact}</span>
+            <span className="quote-divider desktop-only">•</span>
+            <span className="quote-text desktop-only">"{randomQuote}"</span>
           </div>
         </div>
       </div>
@@ -68,9 +78,10 @@ export default function Header({ onOpenAddGoal, onToggleMobileNav }) {
             sfx.playClick();
             onOpenAddGoal();
           }}
+          title="Add Goal"
         >
-          <Plus size={18} strokeWidth={2.5} />
-          <span>Add Goal</span>
+          <Plus size={16} strokeWidth={2.5} />
+          <span className="btn-add-label">Add Goal</span>
         </button>
 
         {/* Notifications Popover Toggle */}

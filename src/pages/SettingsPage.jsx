@@ -47,9 +47,10 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (currentUser) {
-      setDisplayName(currentUser.displayName || 'Prashant Yadav');
-      setUsername(currentUser.username || 'prashant_beast');
-      setAvatar(currentUser.avatar || AVATAR_PRESETS[0]);
+      const fallbackName = currentUser.displayName || (currentUser.email ? currentUser.email.split('@')[0] : 'Athlete');
+      setDisplayName(currentUser.displayName || fallbackName);
+      setUsername(currentUser.username || fallbackName.toLowerCase().replace(/[^a-z0-9_]/g, '_'));
+      setAvatar(currentUser.avatar || currentUser.photoURL || AVATAR_PRESETS[0]);
       if (currentUser.settings) {
         setUnits(currentUser.settings.units || 'metric');
         setTimeZone(currentUser.settings.timeZone || 'Asia/Kolkata');
@@ -136,6 +137,49 @@ export default function SettingsPage() {
       </section>
 
       <form onSubmit={handleSave} className="settings-form">
+        {/* Authenticated Firebase Account Information */}
+        <div className="settings-section-card">
+          <div className="card-header-inner">
+            <Shield size={20} className="icon-violet" />
+            <h3 className="settings-card-title">Firebase Authentication Identity</h3>
+          </div>
+          <div className="form-grid-3">
+            <div className="input-field-group">
+              <label className="field-label">Authenticated Email</label>
+              <input
+                type="text"
+                className="form-input"
+                value={currentUser?.email || 'No email attached'}
+                readOnly
+                disabled
+                style={{ opacity: 0.9, cursor: 'default' }}
+              />
+            </div>
+            <div className="input-field-group">
+              <label className="field-label">Firebase User UID</label>
+              <input
+                type="text"
+                className="form-input"
+                value={currentUser?.uid || ''}
+                readOnly
+                disabled
+                style={{ opacity: 0.9, cursor: 'default', fontFamily: 'monospace', fontSize: '0.85rem' }}
+              />
+            </div>
+            <div className="input-field-group">
+              <label className="field-label">Auth Provider</label>
+              <input
+                type="text"
+                className="form-input"
+                value={currentUser?.authProvider === 'google' ? 'Google Authentication' : 'Email & Password'}
+                readOnly
+                disabled
+                style={{ opacity: 0.9, cursor: 'default' }}
+              />
+            </div>
+          </div>
+        </div>
+
         {/* Profile Card */}
         <div className="settings-section-card">
           <div className="card-header-inner">

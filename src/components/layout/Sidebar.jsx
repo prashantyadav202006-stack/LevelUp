@@ -51,16 +51,58 @@ export default function Sidebar({
 }) {
   const { currentUser, signOut } = useAuth();
   const [showArenaSection, setShowArenaSection] = useState(true);
-  const [uiScale, setUiScale] = useState(96);
-  const [isAutoUiSize, setIsAutoUiSize] = useState(true);
+  const [uiScale, setUiScale] = useState(() => {
+    try {
+      const saved = localStorage.getItem('levelup_ui_scale');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.scale || 96;
+      }
+    } catch {
+      // fallback
+    }
+    return 96;
+  });
 
-  // Apply UI Scaling to document root
+  const [isAutoUiSize, setIsAutoUiSize] = useState(() => {
+    try {
+      const saved = localStorage.getItem('levelup_ui_scale');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.isAuto !== false;
+      }
+    } catch {
+      // fallback
+    }
+    return true;
+  });
+
+  // Apply UI Scaling to document root and set scale attributes
   useEffect(() => {
-    document.documentElement.style.fontSize = `${(uiScale / 100) * 16}px`;
+    const isMobile = typeof window !== 'undefined' && window.innerWidth <= 640;
+    const effectiveScale = isAutoUiSize ? (isMobile ? 88 : 96) : uiScale;
+
+    document.documentElement.style.fontSize = `${(effectiveScale / 100) * 16}px`;
+    document.documentElement.style.setProperty('--ui-scale', `${effectiveScale / 100}`);
+    document.documentElement.setAttribute(
+      'data-ui-scale',
+      effectiveScale <= 88 ? 'compact' : effectiveScale >= 115 ? 'large' : 'normal'
+    );
+
+    try {
+      localStorage.setItem(
+        'levelup_ui_scale',
+        JSON.stringify({ scale: effectiveScale, isAuto: isAutoUiSize })
+      );
+    } catch {
+      // ignore
+    }
+
     return () => {
       document.documentElement.style.fontSize = '';
+      document.documentElement.removeAttribute('data-ui-scale');
     };
-  }, [uiScale]);
+  }, [uiScale, isAutoUiSize]);
 
   // Lock body scroll when mobile drawer is open so background never scrolls
   useEffect(() => {
@@ -437,20 +479,41 @@ export default function Sidebar({
           <div
             className="user-profile-card"
             onClick={() => handleNavClick('settings')}
-            title="Open Profile Settings"
+            title={`Account: ${currentUser?.email || 'Athlete'} (UID: ${currentUser?.uid || ''})`}
           >
             <img
               src={
                 currentUser?.avatar ||
+                currentUser?.photoURL ||
                 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'
               }
-              alt={currentUser?.displayName || 'Athlete'}
+              alt={currentUser?.displayName || currentUser?.email || 'Athlete'}
               className="user-avatar"
             />
             {!isCollapsed && (
               <div className="user-details">
-                <span className="user-name">{currentUser?.displayName || 'Prashant'}</span>
-                <span className="user-level-badge">LVL {currentUser?.level || 1} • {currentUser?.xp || 100} XP</span>
+                <span className="user-name">
+                  {currentUser?.displayName || (currentUser?.email ? currentUser.email.split('@')[0] : 'Athlete')}
+                </span>
+                {currentUser?.email && (
+                  <span
+                    className="user-email-text"
+                    style={{
+                      fontSize: '0.72rem',
+                      color: 'var(--text-muted, #94a3b8)',
+                      maxWidth: '135px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      display: 'block',
+                      lineHeight: '1.2',
+                    }}
+                    title={currentUser.email}
+                  >
+                    {currentUser.email}
+                  </span>
+                )}
+                <span className="user-level-badge">LVL {currentUser?.level || 1} • {currentUser?.xp || 0} XP</span>
               </div>
             )}
           </div>

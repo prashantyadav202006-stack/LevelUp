@@ -1,6 +1,7 @@
 /**
  * Authentication Service
- * Manages Firebase Authentication and user profile synchronization
+ * Manages Firebase Authentication and Firestore user profile synchronization
+ * Strict isolation: every user is bound to their real Firebase UID and email.
  */
 import {
   signInWithEmailAndPassword,
@@ -9,51 +10,70 @@ import {
   signOut as firebaseSignOut,
   onAuthStateChanged,
   updateProfile,
+  sendPasswordResetEmail,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db, googleProvider, isFirebaseConfigured } from '../firebase';
 import { getStoredItem, setStoredItem } from './storageHelper';
 
-const DEMO_USER = {
-  uid: 'demo_athlete_prashant',
-  email: 'athlete@levelup.com',
-  displayName: 'Prashant Yadav',
-  username: 'prashant_beast',
-  avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-  level: 5,
-  xp: 2450,
-  currentStreak: 6,
-  bestStreak: 14,
-  joinedAt: '2026-01-15',
-  bio: 'Daily athletic consistency. Building better every day.',
-  targets: {
-    calories: 2600,
-    protein: 165,
-    carbs: 280,
-    fats: 70,
-    water: 3500,
-    steps: 10000,
-  },
-  settings: {
-    units: 'metric',
-    timeZone: 'Asia/Kolkata',
-    visibility: 'public',
-    notifications: true,
-  },
+const DEFAULT_TARGETS = {
+  calories: 2600,
+  protein: 165,
+  carbs: 280,
+  fats: 70,
+  water: 3500,
+  steps: 10000,
 };
 
-export const authService = {
-  // Subscribe to authentication state
-  onAuthStateChange(callback) {
-    // Check if demo/local session is active
-    const localUser = getStoredItem('active_user', null);
-    if (!isFirebaseConfigured && localUser) {
-      callback(localUser);
-      return () => {};
-    }
+const DEFAULT_SETTINGS = {
+  units: 'metric',
+  timeZone: 'Asia/Kolkata',
+  visibility: 'public',
+  notifications: true,
+};
 
+export function getFriendlyAuthError(err) {
+  if (!err) return 'Authentication failed. Please try again.';
+  const code = err.code || '';
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/user-not-found':
+    case 'auth/wrong-password':
+      return 'Invalid email or password. Please verify your credentials or register a new account.';
+    case 'auth/email-already-in-use':
+      return 'An account with this email address already exists. Please sign in instead.';
+    case 'auth/weak-password':
+      return 'Password must be at least 6 characters.';
+    case 'auth/invalid-email':
+      return 'Please provide a valid email format.';
+    case 'auth/popup-closed-by-user':
+      return 'Sign-in popup was closed before completing authentication.';
+    case 'auth/cancelled-popup-request':
+      return 'Another authentication popup is already pending.';
+    case 'auth/popup-blocked':
+      return 'Popup was blocked by your browser. Please allow popups for LevelUp.';
+    case 'auth/unauthorized-domain':
+      return 'Firebase Error: This domain is not authorized in Firebase Console (Authentication > Settings > Authorized domains).';
+    case 'auth/operation-not-allowed':
+      return 'This sign-in provider is disabled in Firebase console. Please enable Email/Password or Google provider.';
+    case 'auth/too-many-requests':
+      return 'Too many failed login attempts. Please wait a moment and try again.';
+    case 'auth/network-request-failed':
+      return 'Network connection error. Please verify your internet connection.';
+    default:
+      return err.message || 'Authentication error. Please try again.';
+  }
+}
+
+export const authService = {
+  /**
+   * Subscribe to real Firebase authentication state changes.
+   * Single source of truth: emits authenticated user object or null.
+   */
+  onAuthStateChange(callback) {
     if (!auth) {
-      callback(localUser);
+      setStoredItem('active_user', null);
+      callback(null);
       return () => {};
     }
 
@@ -63,7 +83,11 @@ export const authService = {
           firebaseUser.providerData?.some((p) => p.providerId === 'google.com') ||
           sessionStorage.getItem('last_auth_provider') === 'google';
 
-        // Fetch or create Firestore user profile
+        const email = firebaseUser.email || '';
+        const fallbackName = firebaseUser.displayName || (email ? email.split('@')[0] : 'Athlete');
+        const defaultUsername = fallbackName.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+
+        // Fetch or initialize Firestore user profile
         let userProfile = null;
         if (db && isFirebaseConfigured) {
           try {
@@ -74,11 +98,9 @@ export const authService = {
             } else {
               userProfile = {
                 uid: firebaseUser.uid,
-                email: firebaseUser.email,
-                displayName: firebaseUser.displayName || firebaseUser.email.split('@')[0],
-                username: (firebaseUser.displayName || firebaseUser.email.split('@')[0] || 'prashant_beast')
-                  .toLowerCase()
-                  .replace(/\s+/g, '_'),
+                email: email,
+                displayName: fallbackName,
+                username: defaultUsername,
                 avatar:
                   firebaseUser.photoURL ||
                   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
@@ -89,232 +111,187 @@ export const authService = {
                 authProvider: isGoogle ? 'google' : 'password',
                 isOnboardingCompleted: false,
                 createdAt: serverTimestamp(),
-                targets: {
-                  calories: 2600,
-                  protein: 165,
-                  carbs: 280,
-                  fats: 70,
-                  water: 3500,
-                  steps: 10000,
-                },
-                settings: {
-                  units: 'metric',
-                  timeZone: 'Asia/Kolkata',
-                  visibility: 'public',
-                  notifications: true,
-                },
+                targets: DEFAULT_TARGETS,
+                settings: DEFAULT_SETTINGS,
               };
               await setDoc(userDocRef, userProfile);
             }
           } catch (err) {
-            console.warn('[Firestore] Profile fetch error, using local fallback:', err);
+            console.warn('[Firestore] Profile fetch error:', err);
           }
         }
 
-        const mergedUser = {
+        const authenticatedUser = {
           uid: firebaseUser.uid,
           email: firebaseUser.email,
-          displayName: firebaseUser.displayName || firebaseUser.email.split('@')[0],
-          photoURL: firebaseUser.photoURL,
+          displayName: userProfile?.displayName || firebaseUser.displayName || fallbackName,
+          username: userProfile?.username || defaultUsername,
+          photoURL: firebaseUser.photoURL || userProfile?.avatar,
+          avatar:
+            userProfile?.avatar ||
+            firebaseUser.photoURL ||
+            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
           authProvider: isGoogle ? 'google' : (userProfile?.authProvider || 'password'),
           isOnboardingCompleted: userProfile?.isOnboardingCompleted === true,
+          level: userProfile?.level || 1,
+          xp: userProfile?.xp || 150,
+          currentStreak: userProfile?.currentStreak || 1,
+          bestStreak: userProfile?.bestStreak || 1,
+          targets: userProfile?.targets || DEFAULT_TARGETS,
+          settings: userProfile?.settings || DEFAULT_SETTINGS,
           ...(userProfile || {}),
         };
-        setStoredItem('active_user', mergedUser);
-        callback(mergedUser);
+
+        // Cache active user for fast offline restore
+        setStoredItem('active_user', authenticatedUser);
+        callback(authenticatedUser);
       } else {
-        const activeLocal = getStoredItem('active_user', null);
-        callback(activeLocal);
+        // User logged out or unauthenticated: clean state immediately
+        setStoredItem('active_user', null);
+        callback(null);
       }
     });
   },
 
-  // Sign In with Email & Password
+  /**
+   * Sign In with Email & Password using Firebase Authentication
+   */
   async signIn(email, password) {
     const cleanEmail = (email || '').trim().toLowerCase();
-
-    // 1. Try Firebase Authentication if available
-    if (auth) {
-      try {
-        const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
-        return userCredential.user;
-      } catch (err) {
-        // If real Firebase Auth user found or network error, let it handle unless it's demo or API key missing
-        if (err.code !== 'auth/api-key-not-valid' && err.code !== 'auth/invalid-api-key') {
-          // If user exists locally in multi-account registry, check credentials
-          const registered = getStoredItem('registered_users', {});
-          if (registered[cleanEmail]) {
-            const user = registered[cleanEmail];
-            setStoredItem('active_user', user);
-            return user;
-          }
-          throw err;
-        }
-      }
+    if (!cleanEmail || !password) {
+      throw new Error('Email and password are required.');
     }
 
-    // 2. Multi-Account Registry Support
-    const registered = getStoredItem('registered_users', {});
-    if (registered[cleanEmail]) {
-      const user = registered[cleanEmail];
-      setStoredItem('active_user', user);
-      return user;
+    if (!auth) {
+      throw new Error('Firebase Auth is not available.');
     }
 
-    // Fallback: Generate distinct account for this email
-    const safeHash = btoa(cleanEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
-    const user = {
-      ...DEMO_USER,
-      uid: cleanEmail === 'athlete@levelup.com' ? 'demo_athlete_prashant' : `user_${safeHash}`,
-      email: cleanEmail,
-      displayName: cleanEmail.split('@')[0],
-      username: cleanEmail.split('@')[0].toLowerCase(),
-    };
-    registered[cleanEmail] = user;
-    setStoredItem('registered_users', registered);
-    setStoredItem('active_user', user);
-    return user;
-  },
-
-  // Sign Up with Email, Password & Display Name
-  async signUp(email, password, displayName) {
-    const cleanEmail = (email || '').trim().toLowerCase();
-    const name = displayName || cleanEmail.split('@')[0];
-    const safeHash = btoa(cleanEmail).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
-    const assignedUid = `user_${safeHash}`;
-
-    // 1. Try Firebase Authentication if configured
-    if (auth) {
-      try {
-        const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
-        if (name) {
-          await updateProfile(userCredential.user, { displayName: name });
-        }
-        return userCredential.user;
-      } catch (err) {
-        if (err.code !== 'auth/api-key-not-valid' && err.code !== 'auth/invalid-api-key') {
-          throw err;
-        }
-      }
-    }
-
-    // 2. Create distinct account for this athlete with unique UID
-    const newUser = {
-      ...DEMO_USER,
-      uid: assignedUid,
-      email: cleanEmail,
-      displayName: name,
-      username: name.toLowerCase().replace(/\s+/g, '_'),
-      level: 1,
-      xp: 100,
-      currentStreak: 0,
-      bestStreak: 0,
-    };
-
-    const registered = getStoredItem('registered_users', {});
-    registered[cleanEmail] = newUser;
-    setStoredItem('registered_users', registered);
-    setStoredItem('active_user', newUser);
-
-    // Initialize Firestore profile if Firestore db is connected
-    if (db) {
-      try {
-        const userDocRef = doc(db, 'users', assignedUid);
-        await setDoc(userDocRef, {
-          ...newUser,
-          createdAt: serverTimestamp(),
-        });
-      } catch (e) {
-        console.warn('[Firestore] Profile init note:', e.message);
-      }
-    }
-
-    return newUser;
-
-    // Initialize Firestore profile
-    if (db) {
-      try {
-        const userDocRef = doc(db, 'users', userCredential.user.uid);
-        const profile = {
-          uid: userCredential.user.uid,
-          email,
-          displayName: displayName || email.split('@')[0],
-          username: (displayName || email.split('@')[0]).toLowerCase().replace(/\s+/g, '_'),
-          avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-          level: 1,
-          xp: 100,
-          currentStreak: 0,
-          bestStreak: 0,
-          createdAt: serverTimestamp(),
-          targets: {
-            calories: 2400,
-            protein: 150,
-            carbs: 260,
-            fats: 65,
-            water: 3000,
-            steps: 10000,
-          },
-          settings: {
-            units: 'metric',
-            timeZone: 'UTC',
-            visibility: 'public',
-            notifications: true,
-          },
-        };
-        await setDoc(userDocRef, profile);
-      } catch (e) {
-        console.warn('Firestore profile init:', e);
-      }
-    }
-
+    const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
     return userCredential.user;
   },
 
-  // Google Sign-In
+  /**
+   * Sign Up with Email, Password & Display Name using Firebase Authentication
+   */
+  async signUp(email, password, displayName) {
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const name = displayName?.trim() || (cleanEmail ? cleanEmail.split('@')[0] : 'Athlete');
+
+    if (!cleanEmail || !password) {
+      throw new Error('Email and password are required.');
+    }
+
+    if (!auth) {
+      throw new Error('Firebase Auth is not available.');
+    }
+
+    const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+    const user = userCredential.user;
+
+    if (name && user) {
+      try {
+        await updateProfile(user, { displayName: name });
+      } catch (err) {
+        console.warn('Could not update profile displayName:', err);
+      }
+    }
+
+    // Initialize user doc in Firestore
+    if (db && user) {
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        const profile = {
+          uid: user.uid,
+          email: cleanEmail,
+          displayName: name,
+          username: name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+          avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+          level: 1,
+          xp: 150,
+          currentStreak: 1,
+          bestStreak: 1,
+          authProvider: 'password',
+          isOnboardingCompleted: false,
+          createdAt: serverTimestamp(),
+          targets: DEFAULT_TARGETS,
+          settings: DEFAULT_SETTINGS,
+        };
+        await setDoc(userDocRef, profile);
+      } catch (e) {
+        console.warn('[Firestore] Profile init on signup error:', e);
+      }
+    }
+
+    return user;
+  },
+
+  /**
+   * Sign In via Google Popup
+   */
   async signInWithGoogle() {
     sessionStorage.setItem('last_auth_provider', 'google');
     sessionStorage.setItem('prompt_google_onboarding', 'true');
 
-    if (!isFirebaseConfigured || !auth) {
-      const demoGoogle = {
-        ...DEMO_USER,
-        displayName: 'Prashant Yadav',
-        username: 'prashant_beast',
-        authProvider: 'google',
-        isOnboardingCompleted: false,
-      };
-      setStoredItem('active_user', demoGoogle);
-      return demoGoogle;
+    if (!auth) {
+      throw new Error('Firebase Auth is not available.');
     }
+
     const result = await signInWithPopup(auth, googleProvider);
     return result.user;
   },
 
-  // Quick Demo Login
-  signInDemo() {
-    setStoredItem('active_user', DEMO_USER);
-    return DEMO_USER;
+  /**
+   * Dispatch password reset email
+   */
+  async resetPassword(email) {
+    const cleanEmail = (email || '').trim().toLowerCase();
+    if (!cleanEmail) throw new Error('Email is required.');
+    if (!auth) throw new Error('Firebase Auth is not available.');
+    await sendPasswordResetEmail(auth, cleanEmail);
   },
 
-  // Sign Out
+  /**
+   * Complete Sign Out
+   */
   async signOut() {
+    // 1. Wipe active user & session markers immediately
+    const currentActive = getStoredItem('active_user', null);
+    const activeUid = currentActive?.uid || auth?.currentUser?.uid;
+
     setStoredItem('active_user', null);
-    if (auth && isFirebaseConfigured) {
+    sessionStorage.removeItem('last_auth_provider');
+    sessionStorage.removeItem('prompt_google_onboarding');
+
+    // 2. Clear user-scoped offline goal caches
+    if (activeUid) {
+      try {
+        localStorage.removeItem(`levelup_goals_${activeUid}`);
+        localStorage.removeItem(`levelup_dailyLogs_${activeUid}`);
+      } catch (e) {
+        console.warn('Cache clearing note:', e);
+      }
+    }
+
+    // 3. Complete Firebase Sign Out
+    if (auth) {
       try {
         await firebaseSignOut(auth);
       } catch (err) {
-        console.warn('Firebase signout:', err);
+        console.warn('Firebase signout error:', err);
       }
     }
   },
 
-  // Update Profile
+  /**
+   * Update Profile in Firestore and local state
+   */
   async updateUserProfile(uid, updates) {
-    const current = getStoredItem('active_user', DEMO_USER);
+    if (!uid) return null;
+    const current = getStoredItem('active_user', null) || {};
     const updated = { ...current, ...updates };
     setStoredItem('active_user', updated);
 
-    if (db && isFirebaseConfigured && uid) {
+    if (db && isFirebaseConfigured) {
       try {
         const userRef = doc(db, 'users', uid);
         await setDoc(userRef, updates, { merge: true });

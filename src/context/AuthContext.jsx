@@ -20,44 +20,36 @@ export function AuthProvider({ children }) {
   }, []);
 
   const signIn = async (email, password) => {
-    const user = await authService.signIn(email, password);
-    setCurrentUser(user);
-    return user;
+    return await authService.signIn(email, password);
   };
 
   const signUp = async (email, password, displayName) => {
-    const user = await authService.signUp(email, password, displayName);
-    setCurrentUser(user);
-    return user;
+    return await authService.signUp(email, password, displayName);
   };
 
   const signInWithGoogle = async () => {
-    const user = await authService.signInWithGoogle();
-    setCurrentUser(user);
-    return user;
-  };
-
-  const signInDemo = () => {
-    const user = authService.signInDemo();
-    setCurrentUser(user);
-    return user;
+    return await authService.signInWithGoogle();
   };
 
   const signOut = async () => {
-    await authService.signOut();
     setCurrentUser(null);
+    await authService.signOut();
+  };
+
+  const resetPassword = async (email) => {
+    await authService.resetPassword(email);
   };
 
   const updateProfile = async (updates) => {
-    if (!currentUser) return;
+    if (!currentUser?.uid) return;
     const updated = await authService.updateUserProfile(currentUser.uid, updates);
     setCurrentUser(updated);
     return updated;
   };
 
   const awardXp = (amount, reason = '') => {
-    if (!currentUser) return;
-    const updatedUser = gamificationService.addXp(currentUser.uid, amount);
+    if (!currentUser?.uid) return;
+    const updatedUser = gamificationService.addXp(currentUser.uid, amount, currentUser);
     setCurrentUser(updatedUser);
     return updatedUser;
   };
@@ -70,8 +62,8 @@ export function AuthProvider({ children }) {
         signIn,
         signUp,
         signInWithGoogle,
-        signInDemo,
         signOut,
+        resetPassword,
         updateProfile,
         awardXp,
       }}
