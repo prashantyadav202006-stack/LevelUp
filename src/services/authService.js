@@ -202,6 +202,31 @@ export const authService = {
         // Cache permanently in user-scoped persistent storage and active session
         setStoredItem(`profile_${uid}`, authenticatedUser);
         setStoredItem('active_user', authenticatedUser);
+
+        // Ensure public discovery profile in Cloud Firestore is always up-to-date for friend search
+        if (db && isFirebaseConfigured) {
+          try {
+            const publicRef = doc(db, 'profiles', uid);
+            setDoc(
+              publicRef,
+              {
+                uid,
+                displayName: authenticatedUser.displayName,
+                username: authenticatedUser.username,
+                avatar: authenticatedUser.avatar,
+                level: authenticatedUser.level || 1,
+                xp: authenticatedUser.xp || 0,
+                currentStreak: authenticatedUser.currentStreak || 0,
+                bestStreak: authenticatedUser.bestStreak || 0,
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true }
+            ).catch(() => {});
+          } catch {
+            // Non-blocking public profile sync
+          }
+        }
+
         callback(authenticatedUser);
       } else {
         // User logged out or unauthenticated: clean active session only

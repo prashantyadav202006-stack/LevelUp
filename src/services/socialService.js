@@ -1,393 +1,631 @@
 /**
  * Social Competition & Friends Service
- * Manages fair leaderboards, friend requests, and athletic community challenges
+ * Manages authentic athlete discovery, legitimate friend requests,
+ * real-time notification dispatch, and Firestore synchronization.
+ * Strictly guarantees ONLY legitimate user profiles are shown.
  */
+import {
+  collection,
+  doc,
+  getDocs,
+  getDoc,
+  setDoc,
+  deleteDoc,
+  query,
+  where,
+  onSnapshot,
+  serverTimestamp,
+} from 'firebase/firestore';
+import { db, isFirebaseConfigured } from '../firebase.js';
 import { getStoredItem, setStoredItem } from './storageHelper.js';
 
-const INITIAL_FRIENDS = [
-  {
-    id: 'f_alex',
-    username: 'alex_iron',
-    displayName: 'Alex Mercer',
-    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-    level: 7,
-    xp: 3820,
-    currentStreak: 12,
-    goalsCompleted: 48,
-    status: 'Training Heavy',
-  },
-  {
-    id: 'f_sophia',
-    username: 'sophia_lift',
-    displayName: 'Sophia Sterling',
-    avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
-    level: 6,
-    xp: 3100,
-    currentStreak: 8,
-    goalsCompleted: 39,
-    status: 'Hybrid Marathon Prep',
-  },
-  {
-    id: 'f_rohan',
-    username: 'rohan_sprint',
-    displayName: 'Rohan Sharma',
-    avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
-    level: 5,
-    xp: 2600,
-    currentStreak: 6,
-    goalsCompleted: 32,
-    status: 'DSA & Strength Phase',
-  },
-];
+// Blocklist of legacy demo user IDs and usernames to never show in athlete searches
+const DEMO_USER_IDS = new Set([
+  'f_alex',
+  'f_sophia',
+  'f_rohan',
+  'user_elena_v',
+  'user_marcus_cole',
+  'user_priya_patel',
+  'user_liam_chen',
+  'user_david_miller',
+  'user_maya_lin',
+  'user_tara_endure',
+  'user_jordan_reed',
+  'sug_rohit',
+  'sug_pooja',
+  'sug_kabir',
+  'viktor_titan',
+  'marcus_v',
+  'user_viktor',
+  'user_maya',
+  'user_marcus',
+  'req_elena',
+]);
 
-export const ALL_COMMUNITY_USERS = [
-  {
-    id: 'user_elena_v',
-    username: 'elena_v',
-    displayName: 'Elena Vance',
-    avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80',
-    level: 7,
-    xp: 3950,
-    currentStreak: 14,
-    goalsCompleted: 52,
-    discipline: 'Endurance & Half Marathon',
-    bio: 'Pushing tempo intervals every sunrise. Sub-90m half marathon goal.',
-    location: 'Denver, CO',
-  },
-  {
-    id: 'user_marcus_cole',
-    username: 'marcus_iron',
-    displayName: 'Marcus Cole',
-    avatar: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=150&auto=format&fit=crop&q=80',
-    level: 8,
-    xp: 4420,
-    currentStreak: 18,
-    goalsCompleted: 68,
-    discipline: 'Powerlifting & Hypertrophy',
-    bio: 'Squat, Bench, Deadlift standard. 600kg total target in progress.',
-    location: 'Austin, TX',
-  },
-  {
-    id: 'user_priya_patel',
-    username: 'priya_flow',
-    displayName: 'Priya Patel',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-    level: 6,
-    xp: 3200,
-    currentStreak: 9,
-    goalsCompleted: 41,
-    discipline: 'HIIT & Functional Mobility',
-    bio: 'Mobility before intensity. Daily core and flexibility flow.',
-    location: 'London, UK',
-  },
-  {
-    id: 'user_liam_chen',
-    username: 'liam_beast',
-    displayName: 'Liam Chen',
-    avatar: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=150&auto=format&fit=crop&q=80',
-    level: 9,
-    xp: 5120,
-    currentStreak: 24,
-    goalsCompleted: 85,
-    discipline: 'Calisthenics & Gymnastics',
-    bio: 'Planchan, front lever, muscle-up mastery. Bodyweight warrior.',
-    location: 'San Francisco, CA',
-  },
-  {
-    id: 'user_david_miller',
-    username: 'david_tri',
-    displayName: 'David Miller',
-    avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
-    level: 5,
-    xp: 2750,
-    currentStreak: 7,
-    goalsCompleted: 33,
-    discipline: 'Triathlon & Cycling',
-    bio: 'Swimming laps, road cycling, and brick sessions. Ironman 70.3 prep.',
-    location: 'Seattle, WA',
-  },
-  {
-    id: 'user_maya_lin',
-    username: 'maya_sprint',
-    displayName: 'Maya Lin',
-    avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80',
-    level: 6,
-    xp: 3380,
-    currentStreak: 11,
-    goalsCompleted: 44,
-    discipline: 'Track & 400m Sprinting',
-    bio: 'Explosive acceleration and lactate threshold work. Never skip track day.',
-    location: 'Toronto, Canada',
-  },
-  {
-    id: 'user_tara_endure',
-    username: 'tara_trail',
-    displayName: 'Tara Brooks',
-    avatar: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=150&auto=format&fit=crop&q=80',
-    level: 7,
-    xp: 3890,
-    currentStreak: 15,
-    goalsCompleted: 58,
-    discipline: 'Trail Running & Ultra Prep',
-    bio: 'Elevation gain is my therapy. 50k mountain ultra training cycle.',
-    location: 'Boulder, CO',
-  },
-  {
-    id: 'user_jordan_reed',
-    username: 'jordan_oly',
-    displayName: 'Jordan Reed',
-    avatar: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=150&auto=format&fit=crop&q=80',
-    level: 8,
-    xp: 4600,
-    currentStreak: 21,
-    goalsCompleted: 74,
-    discipline: 'Olympic Weightlifting',
-    bio: 'Snatch and Clean & Jerk perfection. Speed under the barbell.',
-    location: 'Chicago, IL',
-  },
-];
+const DEMO_USERNAMES = new Set([
+  'alex_iron',
+  'sophia_lift',
+  'rohan_sprint',
+  'elena_v',
+  'marcus_iron',
+  'priya_flow',
+  'liam_beast',
+  'david_tri',
+  'maya_sprint',
+  'tara_trail',
+  'jordan_oly',
+  'rohit_sharma',
+  'pooja_fitness',
+  'kabir_runner',
+  'viktor_titan',
+  'maya_crossfit',
+  'marcus_v',
+]);
 
-const INITIAL_REQUESTS = [
-  {
-    id: 'req_elena',
-    senderId: 'user_elena_v',
-    displayName: 'Elena Vance',
-    username: 'elena_v',
-    avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80',
-    mutualFriends: 2,
-    level: 4,
-    sentAt: '2 hours ago',
-  },
-];
+function isDemoUser(id, username) {
+  if (!id && !username) return true;
+  if (id && DEMO_USER_IDS.has(id)) return true;
+  if (username && DEMO_USERNAMES.has(username.toLowerCase().replace(/^@/, ''))) return true;
+  if (id && (id.startsWith('sug_') || id.startsWith('f_') || id.startsWith('demo_'))) return true;
+  return false;
+}
 
-const INITIAL_CHALLENGES = [
-  {
-    id: 'ch_7day_streak',
-    title: '7-Day Unbroken Habit Sprint',
-    description: 'Complete 100% of your daily scheduled goals for 7 consecutive days.',
-    type: 'Consistency',
-    startDate: '2026-10-15',
-    endDate: '2026-10-22',
-    participantsCount: 142,
-    rewardXp: 500,
-    badgeReward: 'Unstoppable Titan',
-    isJoined: false,
-    userProgress: 0,
-  },
-  {
-    id: 'ch_5_workouts',
-    title: '5 Iron Sessions This Week',
-    description: 'Log 5 dedicated workout sessions with 45+ minutes duration.',
-    type: 'Fitness',
-    startDate: '2026-10-18',
-    endDate: '2026-10-25',
-    participantsCount: 98,
-    rewardXp: 400,
-    badgeReward: 'Iron Beast',
-    isJoined: false,
-    userProgress: 0,
-  },
-  {
-    id: 'ch_10k_steps',
-    title: '70,000 Weekly Steps Sprint',
-    description: 'Accumulate 70k total steps over 7 days through morning cardio and daily walks.',
-    type: 'Cardio',
-    startDate: '2026-10-19',
-    endDate: '2026-10-26',
-    participantsCount: 230,
-    rewardXp: 450,
-    badgeReward: 'Road Warrior',
-    isJoined: false,
-    userProgress: 0,
-  },
-];
+function getInitials(name = '') {
+  const parts = String(name).trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return String(name).slice(0, 2).toUpperCase() || 'AT';
+}
 
-const GLOBAL_LEADERBOARD = [
-  {
-    id: 'user_viktor',
-    username: 'viktor_titan',
-    displayName: 'Viktor Kane',
-    avatar: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=150&auto=format&fit=crop&q=80',
-    xp: 5420,
-    level: 11,
-    goalsCompleted: 78,
-    currentStreak: 24,
-    badge: '🏆 Champion',
-  },
-  {
-    id: 'user_maya',
-    username: 'maya_crossfit',
-    displayName: 'Maya Lin',
-    avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80',
-    xp: 4950,
-    level: 10,
-    goalsCompleted: 69,
-    currentStreak: 19,
-    badge: '🥈 Master',
-  },
-  {
-    id: 'user_alex',
-    username: 'alex_iron',
-    displayName: 'Alex Mercer',
-    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-    xp: 3820,
-    level: 7,
-    goalsCompleted: 48,
-    currentStreak: 12,
-    badge: '🥉 Elite',
-  },
-  {
-    id: 'user_sophia',
-    username: 'sophia_lift',
-    displayName: 'Sophia Sterling',
-    avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
-    xp: 3100,
-    level: 6,
-    goalsCompleted: 39,
-    currentStreak: 8,
-    badge: '⚡ Pro',
-  },
-  {
-    id: 'user_rohan',
-    username: 'rohan_sprint',
-    displayName: 'Rohan Sharma',
-    avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
-    xp: 2600,
-    level: 5,
-    goalsCompleted: 32,
-    currentStreak: 6,
-    badge: '⚡ Pro',
-  },
-  {
-    id: 'user_marcus',
-    username: 'marcus_v',
-    displayName: 'Marcus Vance',
-    avatar: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=150&auto=format&fit=crop&q=80',
-    xp: 1980,
-    level: 4,
-    goalsCompleted: 26,
-    currentStreak: 4,
-    badge: '⚔️ Trainee',
-  },
-];
+function formatTimeAgo(timestamp) {
+  if (!timestamp) return 'Just now';
+  const elapsed = Math.floor((Date.now() - Number(timestamp)) / 1000);
+  if (elapsed < 60) return 'Just now';
+  if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m ago`;
+  if (elapsed < 86400) return `${Math.floor(elapsed / 3600)}h ago`;
+  return `${Math.floor(elapsed / 86400)}d ago`;
+}
 
 export const socialService = {
-  // FRIENDS
-  getFriends(uid) {
-    return getStoredItem(`friends_${uid || 'guest'}`, []);
+  /**
+   * Retrieve ONLY legitimate registered user profiles from Cloud Firestore and local storage.
+   * Completely excludes fake demo profiles and the current logged-in user.
+   */
+  async getLegitimateUsers(currentUid, searchQuery = '') {
+    const athletesMap = new Map();
+
+    // 1. Fetch legitimate profiles from Cloud Firestore
+    if (db && isFirebaseConfigured) {
+      try {
+        const profilesColl = collection(db, 'profiles');
+        const snap = await getDocs(profilesColl);
+        snap.forEach((docSnap) => {
+          const data = docSnap.data();
+          const uid = docSnap.id || data.uid;
+          if (uid && uid !== currentUid && !isDemoUser(uid, data.username)) {
+            athletesMap.set(uid, {
+              id: uid,
+              uid: uid,
+              displayName: data.displayName || 'Athlete',
+              username: data.username || 'athlete',
+              avatar:
+                data.avatar ||
+                'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+              level: data.level || 1,
+              xp: data.xp || 0,
+              currentStreak: data.currentStreak || 0,
+              consistency: data.currentStreak > 0 ? `${Math.min(99, 85 + data.currentStreak * 2)}%` : '88%',
+              initials: getInitials(data.displayName || data.username),
+            });
+          }
+        });
+      } catch (err) {
+        console.warn('[socialService] Firestore profiles fetch notice:', err.message);
+      }
+    }
+
+    // 2. Scan local storage for any registered athlete profiles (multi-user or offline support)
+    try {
+      if (typeof localStorage !== 'undefined') {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('levelup_profile_')) {
+            const raw = localStorage.getItem(key);
+            if (raw) {
+              const u = JSON.parse(raw);
+              const uid = u.uid || key.replace('levelup_profile_', '');
+              if (uid && uid !== currentUid && !isDemoUser(uid, u.username) && !athletesMap.has(uid)) {
+                athletesMap.set(uid, {
+                  id: uid,
+                  uid: uid,
+                  displayName: u.displayName || 'Athlete',
+                  username: u.username || 'athlete',
+                  avatar:
+                    u.avatar ||
+                    u.photoURL ||
+                    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+                  level: u.level || 1,
+                  xp: u.xp || 0,
+                  currentStreak: u.currentStreak || 0,
+                  consistency: u.currentStreak > 0 ? `${Math.min(99, 85 + u.currentStreak * 2)}%` : '88%',
+                  initials: getInitials(u.displayName || u.username),
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore storage enumeration errors
+    }
+
+    let list = Array.from(athletesMap.values());
+
+    // 3. Filter by search query if supplied
+    if (searchQuery && searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase().replace(/^@/, '');
+      list = list.filter(
+        (u) =>
+          u.displayName.toLowerCase().includes(q) ||
+          u.username.toLowerCase().includes(q)
+      );
+    }
+
+    return list;
   },
 
+  /**
+   * Search legitimate community athletes
+   */
+  async searchCommunityAthletes(uid, queryStr) {
+    return await this.getLegitimateUsers(uid, queryStr);
+  },
+
+  /**
+   * Send friend request to a legitimate user.
+   * Dispatches Firestore document and real-time notification to the recipient.
+   */
+  async sendFriendRequest(currentUser, targetUserOrQuery) {
+    if (!currentUser?.uid) {
+      throw new Error('You must be signed in to send friend requests.');
+    }
+
+    // Resolve target legitimate user
+    let targetUser = null;
+    if (typeof targetUserOrQuery === 'object' && targetUserOrQuery !== null) {
+      targetUser = targetUserOrQuery;
+    } else {
+      const cleanQuery = String(targetUserOrQuery || '').trim().toLowerCase().replace(/^@/, '');
+      const all = await this.getLegitimateUsers(currentUser.uid);
+      targetUser = all.find(
+        (u) =>
+          u.username.toLowerCase() === cleanQuery ||
+          u.displayName.toLowerCase() === cleanQuery ||
+          u.uid === cleanQuery
+      );
+    }
+
+    if (!targetUser || !targetUser.uid) {
+      throw new Error(
+        `Athlete not found. Only legitimate, registered LevelUp athletes can be added as friends.`
+      );
+    }
+
+    if (targetUser.uid === currentUser.uid) {
+      throw new Error('You cannot send a friend request to yourself.');
+    }
+
+    const targetUid = targetUser.uid || targetUser.id;
+    const senderName =
+      currentUser.displayName || (currentUser.email ? currentUser.email.split('@')[0] : 'Athlete');
+    const senderUsername =
+      currentUser.username || senderName.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    const senderAvatar =
+      currentUser.avatar ||
+      currentUser.photoURL ||
+      'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+
+    const requestId = `freq_${currentUser.uid}_${targetUid}`;
+    const requestData = {
+      id: requestId,
+      requestId: requestId,
+      senderId: currentUser.uid,
+      senderName: senderName,
+      senderUsername: senderUsername,
+      senderAvatar: senderAvatar,
+      recipientId: targetUid,
+      recipientName: targetUser.displayName || 'Athlete',
+      recipientUsername: targetUser.username || '',
+      recipientAvatar: targetUser.avatar || '',
+      status: 'pending',
+      type: 'friend_request',
+      message: `${senderName} (@${senderUsername}) sent you a friend request!`,
+      createdAt: new Date().toISOString(),
+      timestamp: Date.now(),
+      read: false,
+    };
+
+    // 1. Write to Cloud Firestore friendRequests collection
+    if (db && isFirebaseConfigured) {
+      try {
+        const reqRef = doc(db, 'friendRequests', requestId);
+        await setDoc(reqRef, {
+          ...requestData,
+          serverTime: serverTimestamp(),
+        });
+      } catch (err) {
+        console.warn('[socialService] Firestore friendRequest write notice:', err.message);
+      }
+    }
+
+    // 2. Local storage synchronization for sender (sent list)
+    const senderSent = getStoredItem(`sent_requests_${currentUser.uid}`, []);
+    const existsInSent = senderSent.some(
+      (s) =>
+        (typeof s === 'string' && s.toLowerCase() === targetUser.username.toLowerCase()) ||
+        (s?.recipientId && s.recipientId === targetUid)
+    );
+    if (!existsInSent) {
+      setStoredItem(`sent_requests_${currentUser.uid}`, [
+        ...senderSent,
+        {
+          id: requestId,
+          recipientId: targetUid,
+          recipientUsername: targetUser.username,
+          recipientName: targetUser.displayName,
+          sentAt: Date.now(),
+        },
+      ]);
+    }
+
+    // 3. Local storage synchronization for recipient (incoming requests & notifications)
+    const recipientReqs = getStoredItem(`requests_${targetUid}`, []);
+    const filteredReqs = recipientReqs.filter((r) => r.id !== requestId);
+    setStoredItem(`requests_${targetUid}`, [requestData, ...filteredReqs]);
+
+    const recipientNotifs = getStoredItem(`notifications_${targetUid}`, []);
+    const filteredNotifs = recipientNotifs.filter((n) => n.id !== requestId);
+    setStoredItem(`notifications_${targetUid}`, [requestData, ...filteredNotifs]);
+
+    // 4. Dispatch browser events for immediate live pop notification
+    try {
+      window.dispatchEvent(
+        new CustomEvent('levelup_notification_received', { detail: requestData })
+      );
+      window.dispatchEvent(
+        new CustomEvent('levelup_friend_request_sent', { detail: requestData })
+      );
+    } catch {
+      // Event fallback
+    }
+
+    return {
+      success: true,
+      message: `Friend request sent to ${targetUser.displayName} (@${targetUser.username})! Notification delivered 🚀`,
+      request: requestData,
+    };
+  },
+
+  /**
+   * Send friend request to user object (alias)
+   */
+  async sendFriendRequestToUser(currentUser, targetUser) {
+    return await this.sendFriendRequest(currentUser, targetUser);
+  },
+
+  /**
+   * Real-time subscription to incoming notifications and friend requests for a user
+   */
+  subscribeNotifications(uid, callback) {
+    if (!uid) {
+      callback([]);
+      return () => {};
+    }
+
+    // Initial emit from local notifications
+    const emitCombined = (remoteItems = []) => {
+      const local = getStoredItem(`notifications_${uid}`, []);
+      const map = new Map();
+
+      // Remote Firestore items take priority
+      remoteItems.forEach((item) => {
+        if (item.status === 'pending') {
+          map.set(item.id, {
+            ...item,
+            timeAgo: formatTimeAgo(item.timestamp || Date.now()),
+          });
+        }
+      });
+
+      // Local storage fallback items
+      local.forEach((item) => {
+        if (!map.has(item.id) && item.status === 'pending') {
+          map.set(item.id, {
+            ...item,
+            timeAgo: formatTimeAgo(item.timestamp || Date.now()),
+          });
+        }
+      });
+
+      const list = Array.from(map.values());
+      list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      callback(list);
+    };
+
+    emitCombined([]);
+
+    // Firestore real-time listener for incoming friend requests
+    let firestoreUnsub = null;
+    if (db && isFirebaseConfigured) {
+      try {
+        const q = query(
+          collection(db, 'friendRequests'),
+          where('recipientId', '==', uid)
+        );
+        firestoreUnsub = onSnapshot(
+          q,
+          (snapshot) => {
+            const items = snapshot.docs
+              .map((d) => ({ id: d.id, ...d.data() }))
+              .filter((item) => item.status === 'pending');
+            emitCombined(items);
+          },
+          (err) => {
+            console.warn('[socialService] Notifications onSnapshot notice:', err.message);
+          }
+        );
+      } catch (e) {
+        console.warn('[socialService] Firestore notifications query init error:', e);
+      }
+    }
+
+    // Local custom event listener for immediate pop in current window
+    const handleLocalEvent = (e) => {
+      const detail = e.detail;
+      if (detail && detail.recipientId === uid) {
+        emitCombined([detail]);
+      }
+    };
+    window.addEventListener('levelup_notification_received', handleLocalEvent);
+
+    return () => {
+      if (typeof firestoreUnsub === 'function') firestoreUnsub();
+      window.removeEventListener('levelup_notification_received', handleLocalEvent);
+    };
+  },
+
+  /**
+   * One-shot fetch of notifications for user
+   */
+  getNotifications(uid) {
+    if (!uid) return [];
+    return getStoredItem(`notifications_${uid}`, []);
+  },
+
+  /**
+   * Accept an incoming friend request
+   */
+  async acceptFriendRequest(currentUser, requestId) {
+    if (!currentUser?.uid || !requestId) return;
+
+    // Find the request record
+    const reqs = getStoredItem(`requests_${currentUser.uid}`, []);
+    const target = reqs.find((r) => r.id === requestId);
+
+    const senderId = target?.senderId;
+    const senderName = target?.senderName || 'Athlete';
+    const senderUsername = target?.senderUsername || 'athlete';
+    const senderAvatar =
+      target?.senderAvatar ||
+      'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+
+    // 1. Update Firestore friendRequests status
+    if (db && isFirebaseConfigured) {
+      try {
+        const reqRef = doc(db, 'friendRequests', requestId);
+        await setDoc(reqRef, { status: 'accepted', updatedAt: serverTimestamp() }, { merge: true });
+      } catch (e) {
+        console.warn('[socialService] Firestore acceptFriendRequest notice:', e.message);
+      }
+    }
+
+    // 2. Add to recipient's friends list
+    const myFriends = getStoredItem(`friends_${currentUser.uid}`, []);
+    if (!myFriends.some((f) => f.id === senderId || f.uid === senderId)) {
+      const newFriend = {
+        id: senderId,
+        uid: senderId,
+        displayName: senderName,
+        username: senderUsername,
+        avatar: senderAvatar,
+        level: 1,
+        xp: 150,
+        currentStreak: 1,
+        goalsCompleted: 0,
+        status: 'Accountability Partner',
+      };
+      setStoredItem(`friends_${currentUser.uid}`, [...myFriends, newFriend]);
+    }
+
+    // 3. Add to sender's friends list
+    if (senderId) {
+      const senderFriends = getStoredItem(`friends_${senderId}`, []);
+      const myDisplayName =
+        currentUser.displayName || (currentUser.email ? currentUser.email.split('@')[0] : 'Athlete');
+      if (!senderFriends.some((f) => f.id === currentUser.uid || f.uid === currentUser.uid)) {
+        const meAsFriend = {
+          id: currentUser.uid,
+          uid: currentUser.uid,
+          displayName: myDisplayName,
+          username: currentUser.username || myDisplayName.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+          avatar: currentUser.avatar || currentUser.photoURL || '',
+          level: currentUser.level || 1,
+          xp: currentUser.xp || 0,
+          currentStreak: currentUser.currentStreak || 0,
+          goalsCompleted: 0,
+          status: 'Accountability Partner',
+        };
+        setStoredItem(`friends_${senderId}`, [...senderFriends, meAsFriend]);
+      }
+    }
+
+    // 4. Clean up pending requests & notifications
+    const updatedReqs = reqs.filter((r) => r.id !== requestId);
+    setStoredItem(`requests_${currentUser.uid}`, updatedReqs);
+
+    const notifs = getStoredItem(`notifications_${currentUser.uid}`, []);
+    const updatedNotifs = notifs.filter((n) => n.id !== requestId);
+    setStoredItem(`notifications_${currentUser.uid}`, updatedNotifs);
+
+    try {
+      window.dispatchEvent(new CustomEvent('levelup_friend_updated'));
+    } catch {
+      // Event fallback
+    }
+
+    return {
+      success: true,
+      message: `Friend request accepted! You and ${senderName} are now accountability partners ⚡`,
+    };
+  },
+
+  /**
+   * Reject / decline an incoming friend request
+   */
+  async rejectFriendRequest(currentUser, requestId) {
+    if (!currentUser?.uid || !requestId) return;
+
+    if (db && isFirebaseConfigured) {
+      try {
+        const reqRef = doc(db, 'friendRequests', requestId);
+        await setDoc(reqRef, { status: 'rejected', updatedAt: serverTimestamp() }, { merge: true });
+      } catch (e) {
+        console.warn('[socialService] Firestore rejectFriendRequest notice:', e.message);
+      }
+    }
+
+    const reqs = getStoredItem(`requests_${currentUser.uid}`, []);
+    setStoredItem(
+      `requests_${currentUser.uid}`,
+      reqs.filter((r) => r.id !== requestId)
+    );
+
+    const notifs = getStoredItem(`notifications_${currentUser.uid}`, []);
+    setStoredItem(
+      `notifications_${currentUser.uid}`,
+      notifs.filter((n) => n.id !== requestId)
+    );
+
+    try {
+      window.dispatchEvent(new CustomEvent('levelup_friend_updated'));
+    } catch {
+      // Event fallback
+    }
+  },
+
+  /**
+   * Get confirmed friends for user
+   */
+  getFriends(uid) {
+    if (!uid) return [];
+    const list = getStoredItem(`friends_${uid}`, []);
+    // Guarantee no demo users ever appear in friends
+    return list.filter((f) => !isDemoUser(f.id || f.uid, f.username));
+  },
+
+  /**
+   * Remove friend
+   */
   removeFriend(uid, friendId) {
     const current = this.getFriends(uid);
-    const updated = current.filter((f) => f.id !== friendId);
-    setStoredItem(`friends_${uid || 'guest'}`, updated);
+    const updated = current.filter((f) => f.id !== friendId && f.uid !== friendId);
+    setStoredItem(`friends_${uid}`, updated);
+    try {
+      window.dispatchEvent(new CustomEvent('levelup_friend_updated'));
+    } catch {
+      // Event fallback
+    }
     return updated;
   },
 
+  /**
+   * Get incoming friend requests
+   */
   getFriendRequests(uid) {
-    return getStoredItem(`requests_${uid || 'guest'}`, []);
+    if (!uid) return [];
+    const list = getStoredItem(`requests_${uid}`, []);
+    return list.filter((r) => r.status === 'pending' && !isDemoUser(r.senderId, r.senderUsername));
   },
 
-  acceptFriendRequest(uid, requestId) {
-    const requests = this.getFriendRequests(uid);
-    const target = requests.find((r) => r.id === requestId);
-    if (!target) return this.getFriends(uid);
-
-    const newFriend = {
-      id: target.senderId,
-      username: target.username,
-      displayName: target.displayName,
-      avatar: target.avatar,
-      level: target.level || 1,
-      xp: 500,
-      currentStreak: 1,
-      goalsCompleted: 5,
-      status: 'Recently Added',
-    };
-
-    const currentFriends = this.getFriends(uid);
-    const updatedFriends = [...currentFriends, newFriend];
-    const updatedRequests = requests.filter((r) => r.id !== requestId);
-
-    setStoredItem(`friends_${uid || 'guest'}`, updatedFriends);
-    setStoredItem(`requests_${uid || 'guest'}`, updatedRequests);
-
-    return { updatedFriends, updatedRequests };
-  },
-
-  rejectFriendRequest(uid, requestId) {
-    const requests = this.getFriendRequests(uid);
-    const updated = requests.filter((r) => r.id !== requestId);
-    setStoredItem(`requests_${uid || 'guest'}`, updated);
-    return updated;
-  },
-
-  sendFriendRequest(uid, username) {
-    const cleanUser = username.trim().toLowerCase().replace('@', '');
-    const sent = getStoredItem(`sent_requests_${uid || 'guest'}`, []);
-    if (!sent.includes(cleanUser)) {
-      setStoredItem(`sent_requests_${uid || 'guest'}`, [...sent, cleanUser]);
-    }
-    return {
-      success: true,
-      message: `Friend request dispatched to @${cleanUser}! ⚡`,
-    };
-  },
-
-  sendFriendRequestToUser(uid, targetUser) {
-    const sent = getStoredItem(`sent_requests_${uid || 'guest'}`, []);
-    if (!sent.includes(targetUser.id) && !sent.includes(targetUser.username)) {
-      setStoredItem(`sent_requests_${uid || 'guest'}`, [...sent, targetUser.id, targetUser.username]);
-    }
-    return {
-      success: true,
-      message: `Friend request dispatched to ${targetUser.displayName} (@${targetUser.username})! ⚡`,
-    };
-  },
-
+  /**
+   * Get sent requests
+   */
   getSentRequests(uid) {
-    return getStoredItem(`sent_requests_${uid || 'guest'}`, []);
+    if (!uid) return [];
+    return getStoredItem(`sent_requests_${uid}`, []);
   },
 
-  cancelSentRequest(uid, handleOrId) {
+  /**
+   * Cancel sent request
+   */
+  async cancelSentRequest(uid, handleOrId) {
     const sent = this.getSentRequests(uid);
     const target = String(handleOrId).toLowerCase().replace(/^@/, '');
-    const updated = sent.filter((s) => String(s).toLowerCase().replace(/^@/, '') !== target);
-    setStoredItem(`sent_requests_${uid || 'guest'}`, updated);
+    const updated = sent.filter((s) => {
+      const matchId = s.id && s.id.toLowerCase() === target;
+      const matchRecipient = s.recipientId && s.recipientId.toLowerCase() === target;
+      const matchUsername = s.recipientUsername && s.recipientUsername.toLowerCase() === target;
+      const matchDirect = typeof s === 'string' && s.toLowerCase().replace(/^@/, '') === target;
+      return !(matchId || matchRecipient || matchUsername || matchDirect);
+    });
+    setStoredItem(`sent_requests_${uid}`, updated);
+
+    // If Firestore is active and request id is matched, update or delete
+    if (db && isFirebaseConfigured && String(handleOrId).startsWith('freq_')) {
+      try {
+        await deleteDoc(doc(db, 'friendRequests', String(handleOrId)));
+      } catch (err) {
+        console.warn('Could not cancel Firestore request:', err);
+      }
+    }
+
     return updated;
   },
 
-  getAllCommunityAthletes(uid) {
-    const friends = this.getFriends(uid);
-    const friendIds = new Set(friends.map((f) => f.id));
-    const friendUsernames = new Set(friends.map((f) => f.username.toLowerCase()));
-    const sentList = new Set(this.getSentRequests(uid).map((s) => String(s).toLowerCase()));
-
-    return ALL_COMMUNITY_USERS.map((user) => ({
-      ...user,
-      isFriend: friendIds.has(user.id) || friendUsernames.has(user.username.toLowerCase()),
-      isPending: sentList.has(user.id.toLowerCase()) || sentList.has(user.username.toLowerCase()),
-    }));
-  },
-
-  searchCommunityAthletes(uid, queryStr) {
-    const all = this.getAllCommunityAthletes(uid);
-    if (!queryStr || !queryStr.trim()) return all;
-
-    const q = queryStr.trim().toLowerCase().replace('@', '');
-    return all.filter(
-      (u) =>
-        u.displayName.toLowerCase().includes(q) ||
-        u.username.toLowerCase().includes(q) ||
-        (u.discipline && u.discipline.toLowerCase().includes(q)) ||
-        (u.bio && u.bio.toLowerCase().includes(q)) ||
-        (u.location && u.location.toLowerCase().includes(q))
-    );
-  },
-
-  // CHALLENGES
+  /**
+   * Challenges (clean, no fake demo users)
+   */
   getChallenges(uid) {
-    return getStoredItem(`challenges_${uid || 'guest'}`, INITIAL_CHALLENGES);
+    return getStoredItem(`challenges_${uid || 'guest'}`, [
+      {
+        id: 'ch_7day_streak',
+        title: '7-Day Unbroken Habit Sprint',
+        description: 'Complete 100% of your daily scheduled goals for 7 consecutive days.',
+        type: 'Consistency',
+        startDate: '2026-10-15',
+        endDate: '2026-10-22',
+        participantsCount: 1,
+        rewardXp: 500,
+        badgeReward: 'Unstoppable Titan',
+        isJoined: false,
+        userProgress: 0,
+      },
+      {
+        id: 'ch_5_workouts',
+        title: '5 Iron Sessions This Week',
+        description: 'Log 5 dedicated workout sessions with 45+ minutes duration.',
+        type: 'Fitness',
+        startDate: '2026-10-18',
+        endDate: '2026-10-25',
+        participantsCount: 1,
+        rewardXp: 400,
+        badgeReward: 'Iron Beast',
+        isJoined: false,
+        userProgress: 0,
+      },
+    ]);
   },
 
   toggleJoinChallenge(uid, challengeId) {
@@ -397,7 +635,7 @@ export const socialService = {
         ? {
             ...ch,
             isJoined: !ch.isJoined,
-            participantsCount: ch.isJoined ? ch.participantsCount - 1 : ch.participantsCount + 1,
+            participantsCount: ch.isJoined ? Math.max(1, ch.participantsCount - 1) : ch.participantsCount + 1,
           }
         : ch
     );
@@ -425,9 +663,22 @@ export const socialService = {
     return newChallenge;
   },
 
-  // LEADERBOARDS
-  getLeaderboard(period = 'weekly', filter = 'global', currentUser = null) {
-    let list = [...GLOBAL_LEADERBOARD];
+  /**
+   * Leaderboard based on real legitimate user profiles
+   */
+  async getLeaderboard(period = 'weekly', filter = 'global', currentUser = null) {
+    const legitimate = await this.getLegitimateUsers(currentUser?.uid || '');
+    let list = legitimate.map((u) => ({
+      id: u.uid,
+      username: u.username,
+      displayName: u.displayName,
+      avatar: u.avatar,
+      xp: Number(u.xp) || 0,
+      level: Number(u.level) || 1,
+      goalsCompleted: 0,
+      currentStreak: Number(u.currentStreak) || 0,
+      badge: (u.xp || 0) >= 3000 ? '⚡ Pro' : '🔥 Rising',
+    }));
 
     if (currentUser?.uid) {
       const userDisplay =
@@ -450,16 +701,14 @@ export const socialService = {
 
       if (filter === 'friends') {
         const friends = this.getFriends(currentUser.uid);
-        const friendIds = new Set(friends.map((f) => f.id));
-        const friendsList = list.filter((u) => friendIds.has(u.id) || friendIds.has(u.username));
+        const friendIds = new Set(friends.map((f) => f.id || f.uid));
+        const friendsList = list.filter((u) => friendIds.has(u.id));
         const combined = [userEntry, ...friendsList];
         combined.sort((a, b) => (b.xp || 0) - (a.xp || 0));
         return combined.map((item, idx) => ({ ...item, rank: idx + 1 }));
       }
 
       list.push(userEntry);
-    } else if (filter === 'friends') {
-      return [];
     }
 
     list.sort((a, b) => (b.xp || 0) - (a.xp || 0));

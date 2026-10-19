@@ -50,11 +50,13 @@ export default function SocialPage({ initialTab = 'your-friends' }) {
     badgeReward: 'Titan',
   });
 
-  const loadData = () => {
-    setFriends(socialService.getFriends(currentUser?.uid));
-    setRequests(socialService.getFriendRequests(currentUser?.uid));
-    setChallenges(socialService.getChallenges(currentUser?.uid));
-    setAllAthletes(socialService.getAllCommunityAthletes(currentUser?.uid));
+  const loadData = async () => {
+    if (!currentUser?.uid) return;
+    setFriends(socialService.getFriends(currentUser.uid));
+    setRequests(socialService.getFriendRequests(currentUser.uid));
+    setChallenges(socialService.getChallenges(currentUser.uid));
+    const athletes = await socialService.getLegitimateUsers(currentUser.uid);
+    setAllAthletes(athletes || []);
   };
 
   useEffect(() => {
@@ -62,26 +64,32 @@ export default function SocialPage({ initialTab = 'your-friends' }) {
   }, [currentUser]);
 
   // Handle Add Friend Action from Directory
-  const handleAddAthlete = (athlete) => {
-    sfx.playSuccess();
-    const res = socialService.sendFriendRequestToUser(currentUser?.uid, athlete);
-    setFeedbackMsg(res.message);
-    setAllAthletes(socialService.getAllCommunityAthletes(currentUser?.uid));
+  const handleAddAthlete = async (athlete) => {
+    sfx.playClick();
+    try {
+      const res = await socialService.sendFriendRequest(currentUser, athlete);
+      sfx.playSuccess();
+      setFeedbackMsg(res.message);
+      await loadData();
+    } catch (err) {
+      sfx.playError();
+      setFeedbackMsg(err.message);
+    }
     setTimeout(() => setFeedbackMsg(''), 4500);
   };
 
   // Accept Request
-  const handleAcceptRequest = (requestId) => {
+  const handleAcceptRequest = async (requestId) => {
     sfx.playSuccess();
-    socialService.acceptFriendRequest(currentUser?.uid, requestId);
-    loadData();
+    await socialService.acceptFriendRequest(currentUser, requestId);
+    await loadData();
   };
 
   // Reject Request
-  const handleRejectRequest = (requestId) => {
+  const handleRejectRequest = async (requestId) => {
     sfx.playClick();
-    socialService.rejectFriendRequest(currentUser?.uid, requestId);
-    loadData();
+    await socialService.rejectFriendRequest(currentUser, requestId);
+    await loadData();
   };
 
   // Remove Friend

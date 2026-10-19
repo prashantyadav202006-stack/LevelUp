@@ -1,35 +1,7 @@
 import { useState, useEffect } from 'react';
-import { UserPlus, X, Check, ArrowRight, Sparkles, Clock, Trash2 } from 'lucide-react';
+import { UserPlus, X, Check, ArrowRight, Sparkles, Clock, Trash2, Search, Loader2 } from 'lucide-react';
 import { socialService } from '../../services/socialService';
 import { sfx } from '../../utils/soundEngine';
-
-// Suggested partners matching user's reference image
-const SUGGESTED_PARTNERS = [
-  {
-    id: 'sug_rohit',
-    name: 'Rohit Sharma',
-    handle: 'rohit_sharma',
-    consistency: '93%',
-    initials: 'RS',
-    colorClass: 'avatar-rs',
-  },
-  {
-    id: 'sug_pooja',
-    name: 'Pooja Verma',
-    handle: 'pooja_fitness',
-    consistency: '96%',
-    initials: 'PV',
-    colorClass: 'avatar-pv',
-  },
-  {
-    id: 'sug_kabir',
-    name: 'Kabir Mehta',
-    handle: 'kabir_runner',
-    consistency: '88%',
-    initials: 'KM',
-    colorClass: 'avatar-km',
-  },
-];
 
 export default function AddFriendModal({ isOpen, onClose, currentUser, onFriendRequestSent }) {
   const [activeTab, setActiveTab] = useState('send'); // 'send' | 'sent'
@@ -37,90 +9,137 @@ export default function AddFriendModal({ isOpen, onClose, currentUser, onFriendR
   const [feedback, setFeedback] = useState({ text: '', type: '' });
   const [sentList, setSentList] = useState([]);
   const [requestedPartnerIds, setRequestedPartnerIds] = useState(new Set());
+  const [legitimateUsers, setLegitimateUsers] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
 
-  // Load existing sent requests when modal opens
+  // Load existing sent requests & legitimate registered users when modal opens
   useEffect(() => {
+    let isMounted = true;
     if (isOpen && currentUser?.uid) {
       const existing = socialService.getSentRequests(currentUser.uid) || [];
       setSentList(existing);
-      // Mark matching suggested partners as already requested
-      const existingLower = existing.map((s) => String(s).toLowerCase());
-      const partnerIds = new Set();
-      SUGGESTED_PARTNERS.forEach((p) => {
-        if (existingLower.includes(p.id) || existingLower.includes(p.handle.toLowerCase())) {
-          partnerIds.add(p.id);
-        }
+
+      const requestedSet = new Set();
+      existing.forEach((item) => {
+        if (typeof item === 'string') requestedSet.add(item.toLowerCase().replace(/^@/, ''));
+        if (item?.recipientId) requestedSet.add(item.recipientId);
+        if (item?.recipientUsername) requestedSet.add(item.recipientUsername.toLowerCase());
       });
-      setRequestedPartnerIds(partnerIds);
+      setRequestedPartnerIds(requestedSet);
+
       setInputValue('');
       setFeedback({ text: '', type: '' });
+
+      setIsLoading(true);
+      socialService.getLegitimateUsers(currentUser.uid).then((users) => {
+        if (isMounted) {
+          setLegitimateUsers(users || []);
+          setIsLoading(false);
+        }
+      });
     }
+    return () => {
+      isMounted = false;
+    };
   }, [isOpen, currentUser]);
 
   if (!isOpen) return null;
 
-  // Handle manual input submit
-  const handleSendCustomRequest = (e) => {
+  // Filter legitimate users according to input value
+  const filteredAthletes = legitimateUsers.filter((user) => {
+    if (!inputValue.trim()) return true;
+    const q = inputValue.trim().toLowerCase().replace(/^@/, '');
+    return (
+      user.displayName?.toLowerCase().includes(q) ||
+      user.username?.toLowerCase().includes(q)
+    );
+  });
+
+  // Handle manual input submit (search username and send)
+  const handleSendCustomRequest = async (e) => {
     e.preventDefault();
     const query = inputValue.trim().replace(/^@/, '');
     if (!query) {
-      setFeedback({ text: 'Please enter a username or phone number.', type: 'error' });
+      setFeedback({ text: 'Please enter an athlete username or name.', type: 'error' });
       sfx.playError();
       return;
     }
 
-    sfx.playSuccess();
-    socialService.sendFriendRequest(currentUser?.uid, query);
+    setIsSending(true);
+    try {
+      const res = await socialService.sendFriendRequest(currentUser, query);
+      sfx.playSuccess();
 
-    const updated = socialService.getSentRequests(currentUser?.uid);
-    setSentList(updated);
-    setInputValue('');
-    setFeedback({
-      text: `Friend request sent to @${query}! ⚡`,
-      type: 'success',
-    });
+      const updated = socialService.getSentRequests(currentUser?.uid);
+      setSentList(updated);
+      setRequestedPartnerIds((prev) => new Set(prev).add(query.toLowerCase()));
+      setInputValue('');
+      setFeedback({
+        text: res.message,
+        type: 'success',
+      });
 
-    if (onFriendRequestSent) onFriendRequestSent(query);
-    setTimeout(() => setFeedback({ text: '', type: '' }), 4000);
+      if (onFriendRequestSent) onFriendRequestSent(query);
+    } catch (err) {
+      sfx.playError();
+      setFeedback({
+        text: err.message || 'No registered athlete found with that username.',
+        type: 'error',
+      });
+    } finally {
+      setIsSending(false);
+      setTimeout(() => setFeedback({ text: '', type: '' }), 4500);
+    }
   };
 
-  // Handle clicking "+ Request" on suggested partner
-  const handleRequestSuggested = (partner) => {
-    sfx.playSuccess();
-    socialService.sendFriendRequest(currentUser?.uid, partner.handle);
+  // Handle clicking "+ Request" on legitimate athlete card
+  const handleRequestAthlete = async (partner) => {
+    sfx.playClick();
+    setIsSending(true);
+    try {
+      const res = await socialService.sendFriendRequest(currentUser, partner);
+      sfx.playSuccess();
 
-    setRequestedPartnerIds((prev) => new Set(prev).add(partner.id));
-    const updated = socialService.getSentRequests(currentUser?.uid);
-    setSentList(updated);
+      setRequestedPartnerIds((prev) => {
+        const next = new Set(prev);
+        if (partner.uid) next.add(partner.uid);
+        if (partner.id) next.add(partner.id);
+        if (partner.username) next.add(partner.username.toLowerCase());
+        return next;
+      });
 
-    setFeedback({
-      text: `Friend request sent to ${partner.name}! 🚀`,
-      type: 'success',
-    });
+      const updated = socialService.getSentRequests(currentUser?.uid);
+      setSentList(updated);
 
-    if (onFriendRequestSent) onFriendRequestSent(partner.handle);
-    setTimeout(() => setFeedback({ text: '', type: '' }), 4000);
+      setFeedback({
+        text: res.message,
+        type: 'success',
+      });
+
+      if (onFriendRequestSent) onFriendRequestSent(partner.username);
+    } catch (err) {
+      sfx.playError();
+      setFeedback({
+        text: err.message || 'Failed to dispatch friend request.',
+        type: 'error',
+      });
+    } finally {
+      setIsSending(false);
+      setTimeout(() => setFeedback({ text: '', type: '' }), 4500);
+    }
   };
 
   // Cancel sent request
-  const handleCancelRequest = (handle) => {
+  const handleCancelRequest = async (handleOrId) => {
     sfx.playClick();
-    if (socialService.cancelSentRequest) {
-      const updated = socialService.cancelSentRequest(currentUser?.uid, handle);
-      setSentList(updated);
-    } else {
-      const current = socialService.getSentRequests(currentUser?.uid);
-      const filtered = current.filter((s) => s.toLowerCase() !== handle.toLowerCase());
-      localStorage.setItem(`sent_requests_${currentUser?.uid || 'guest'}`, JSON.stringify(filtered));
-      setSentList(filtered);
-    }
+    const updated = await socialService.cancelSentRequest(currentUser?.uid, handleOrId);
+    setSentList(updated);
+
+    const cleanTarget = String(handleOrId).toLowerCase().replace(/^@/, '');
     setRequestedPartnerIds((prev) => {
       const next = new Set(prev);
-      SUGGESTED_PARTNERS.forEach((p) => {
-        if (p.handle.toLowerCase() === handle.toLowerCase()) {
-          next.delete(p.id);
-        }
-      });
+      next.delete(cleanTarget);
       return next;
     });
   };
@@ -148,7 +167,7 @@ export default function AddFriendModal({ isOpen, onClose, currentUser, onFriendR
             <div>
               <h2 className="af-title">Add a Friend</h2>
               <p className="af-subtitle">
-                Track each other’s daily habits, consistency & diet targets together
+                Connect with authentic athletes to track daily habits & accountability together
               </p>
             </div>
           </div>
@@ -204,7 +223,7 @@ export default function AddFriendModal({ isOpen, onClose, currentUser, onFriendR
             {/* Input & Action Form */}
             <form onSubmit={handleSendCustomRequest} className="af-form-group">
               <label htmlFor="friend-search-input" className="af-label">
-                Friend's Username or Mobile Number
+                Search Authenticated Athletes or Enter Username
               </label>
 
               <div className="af-input-wrap">
@@ -213,7 +232,7 @@ export default function AddFriendModal({ isOpen, onClose, currentUser, onFriendR
                   id="friend-search-input"
                   type="text"
                   className="af-input"
-                  placeholder="e.g. rohit_sharma, neha_fit, or phone"
+                  placeholder="e.g. prashant_yadav or athlete username"
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   autoComplete="off"
@@ -224,55 +243,85 @@ export default function AddFriendModal({ isOpen, onClose, currentUser, onFriendR
               <button
                 type="submit"
                 className="af-submit-btn"
-                disabled={!inputValue.trim()}
+                disabled={!inputValue.trim() || isSending}
               >
-                <span>Send Friend Request</span>
+                <span>{isSending ? 'Sending Request...' : 'Send Friend Request'}</span>
                 <ArrowRight size={17} strokeWidth={2.4} />
               </button>
             </form>
 
-            {/* Suggested Accountability Partners */}
+            {/* Authenticated Community Athletes Section */}
             <div className="af-suggested-section">
               <span className="af-suggested-title">
-                🌟 SUGGESTED ACCOUNTABILITY PARTNERS
+                🌟 REGISTERED LEVELUP ATHLETES ({filteredAthletes.length})
               </span>
 
-              <div className="af-suggested-list">
-                {SUGGESTED_PARTNERS.map((partner) => {
-                  const isSent = requestedPartnerIds.has(partner.id);
-                  return (
-                    <div key={partner.id} className="af-partner-card">
-                      <div className="af-partner-left">
-                        <div className={`af-partner-avatar ${partner.colorClass}`}>
-                          {partner.initials}
-                        </div>
-                        <div className="af-partner-info">
-                          <span className="af-partner-name">{partner.name}</span>
-                          <span className="af-partner-meta">
-                            @{partner.handle} • {partner.consistency} consistency
-                          </span>
-                        </div>
-                      </div>
+              {isLoading ? (
+                <div style={{ textAlign: 'center', padding: '1.5rem', color: '#94a3b8' }}>
+                  <Loader2 size={24} className="spin-animate" style={{ margin: '0 auto 0.5rem' }} />
+                  <p style={{ fontSize: '0.8rem', margin: 0 }}>Searching registered athletes...</p>
+                </div>
+              ) : filteredAthletes.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '1.8rem 1rem', color: '#94a3b8' }}>
+                  <Sparkles size={24} style={{ color: '#8b5cf6', marginBottom: '0.4rem', display: 'block', margin: '0 auto' }} />
+                  <span style={{ fontWeight: 600, color: '#f1f5f9', display: 'block', marginBottom: '0.2rem', fontSize: '0.85rem' }}>
+                    {inputValue.trim() ? `No athlete found matching "${inputValue.trim()}"` : 'No other athletes registered yet'}
+                  </span>
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: '#64748b', lineHeight: 1.4 }}>
+                    Only legitimate registered profiles appear here. Invite your friends to join LevelUp to compete together!
+                  </p>
+                </div>
+              ) : (
+                <div className="af-suggested-list">
+                  {filteredAthletes.map((partner) => {
+                    const partnerUid = partner.uid || partner.id;
+                    const isSent =
+                      requestedPartnerIds.has(partnerUid) ||
+                      requestedPartnerIds.has(partner.username?.toLowerCase());
 
-                      <button
-                        type="button"
-                        className={`af-request-btn ${isSent ? 'sent' : ''}`}
-                        onClick={() => !isSent && handleRequestSuggested(partner)}
-                        disabled={isSent}
-                      >
-                        {isSent ? (
-                          <>
-                            <Check size={13} strokeWidth={2.5} />
-                            <span>Sent</span>
-                          </>
-                        ) : (
-                          <span>+ Request</span>
-                        )}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+                    return (
+                      <div key={partnerUid} className="af-partner-card">
+                        <div className="af-partner-left">
+                          {partner.avatar ? (
+                            <img
+                              src={partner.avatar}
+                              alt={partner.displayName}
+                              className="af-partner-avatar"
+                              style={{ objectFit: 'cover' }}
+                            />
+                          ) : (
+                            <div className="af-partner-avatar avatar-generic">
+                              {partner.initials || 'AT'}
+                            </div>
+                          )}
+                          <div className="af-partner-info">
+                            <span className="af-partner-name">{partner.displayName}</span>
+                            <span className="af-partner-meta">
+                              @{partner.username} • LVL {partner.level} • {partner.consistency} consistency
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          className={`af-request-btn ${isSent ? 'sent' : ''}`}
+                          onClick={() => !isSent && handleRequestAthlete(partner)}
+                          disabled={isSent || isSending}
+                        >
+                          {isSent ? (
+                            <>
+                              <Check size={13} strokeWidth={2.5} />
+                              <span>Sent</span>
+                            </>
+                          ) : (
+                            <span>+ Request</span>
+                          )}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -287,7 +336,7 @@ export default function AddFriendModal({ isOpen, onClose, currentUser, onFriendR
                 <Clock size={32} style={{ color: '#475569', marginBottom: '0.5rem' }} />
                 <span className="empty-title">No pending sent requests</span>
                 <p className="empty-desc">
-                  When you send requests to friends or athletes, they will appear here until accepted.
+                  When you send requests to legitimate athletes, they will appear here until accepted.
                 </p>
                 <button
                   type="button"
@@ -299,29 +348,36 @@ export default function AddFriendModal({ isOpen, onClose, currentUser, onFriendR
               </div>
             ) : (
               <div className="af-suggested-list">
-                {sentList.map((handle, idx) => (
-                  <div key={idx} className="af-partner-card">
-                    <div className="af-partner-left">
-                      <div className="af-partner-avatar avatar-generic">
-                        {String(handle).slice(0, 2).toUpperCase()}
-                      </div>
-                      <div className="af-partner-info">
-                        <span className="af-partner-name">@{handle}</span>
-                        <span className="af-partner-meta">Request pending response</span>
-                      </div>
-                    </div>
+                {sentList.map((item, idx) => {
+                  const label =
+                    item?.recipientName || item?.recipientUsername || (typeof item === 'string' ? item : 'Athlete');
+                  const sub = item?.recipientUsername ? `@${item.recipientUsername}` : 'Pending request';
+                  const key = item?.id || item?.recipientId || idx;
 
-                    <button
-                      type="button"
-                      className="af-cancel-btn"
-                      onClick={() => handleCancelRequest(handle)}
-                      title="Cancel request"
-                    >
-                      <Trash2 size={13} />
-                      <span>Cancel</span>
-                    </button>
-                  </div>
-                ))}
+                  return (
+                    <div key={key} className="af-partner-card">
+                      <div className="af-partner-left">
+                        <div className="af-partner-avatar avatar-generic">
+                          {String(label).slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="af-partner-info">
+                          <span className="af-partner-name">{label}</span>
+                          <span className="af-partner-meta">{sub} • Notification dispatched</span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        className="af-cancel-btn"
+                        onClick={() => handleCancelRequest(item?.id || item?.recipientId || label)}
+                        title="Cancel request"
+                      >
+                        <Trash2 size={13} />
+                        <span>Cancel</span>
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

@@ -33,19 +33,18 @@ export default function YourFriendsModal({
   if (!isOpen) return null;
 
   // Accept incoming invite
-  const handleAcceptInvite = (requestId) => {
+  const handleAcceptInvite = async (requestId) => {
     sfx.playSuccess();
-    const result = socialService.acceptFriendRequest(currentUser?.uid, requestId);
-    setFriends(result.updatedFriends || []);
-    setRequests(result.updatedRequests || []);
+    await socialService.acceptFriendRequest(currentUser, requestId);
+    loadData();
     if (showToast) showToast('Friend request accepted! Welcome to the circle ⚡', 'success');
   };
 
   // Reject incoming invite
-  const handleRejectInvite = (requestId) => {
+  const handleRejectInvite = async (requestId) => {
     sfx.playClick();
-    const updated = socialService.rejectFriendRequest(currentUser?.uid, requestId);
-    setRequests(updated || []);
+    await socialService.rejectFriendRequest(currentUser, requestId);
+    loadData();
     if (showToast) showToast('Invite declined.', 'info');
   };
 
