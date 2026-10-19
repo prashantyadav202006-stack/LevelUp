@@ -108,7 +108,7 @@ export const nutritionService = {
   },
 
   // Calculate day totals (Calories, Protein, Carbs, Fats)
-  calculateTotals(logs = [], targets = { calories: 2400, protein: 150, carbs: 260, fats: 65 }) {
+  calculateTotals(logs = [], targets = { calories: 2600, protein: 165, carbs: 280, fats: 70 }) {
     const consumed = logs.reduce(
       (acc, item) => ({
         calories: acc.calories + (Number(item.calories) || 0),

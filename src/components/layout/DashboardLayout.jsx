@@ -44,7 +44,7 @@ export default function DashboardLayout({ showToast }) {
   // Google Sign-In Onboarding Modal State (matching user uploaded picture)
   const [isGoogleOnboardingModalOpen, setIsGoogleOnboardingModalOpen] = useState(false);
 
-  // Automatically check if Google user needs onboarding profile configuration
+  // Automatically check if user needs onboarding profile configuration in the starting
   useEffect(() => {
     const isGoogleUser =
       currentUser?.authProvider === 'google' ||
@@ -53,26 +53,35 @@ export default function DashboardLayout({ showToast }) {
       sessionStorage.getItem('last_auth_provider') === 'google';
 
     const needsOnboarding =
-      currentUser?.isOnboardingCompleted !== true ||
-      sessionStorage.getItem('prompt_google_onboarding') === 'true';
+      currentUser &&
+      currentUser.isOnboardingCompleted !== true &&
+      sessionStorage.getItem('dismissed_google_onboarding') !== 'true';
 
     if (isGoogleUser && needsOnboarding) {
       setIsGoogleOnboardingModalOpen(true);
+    } else {
+      setIsGoogleOnboardingModalOpen(false);
     }
   }, [currentUser]);
+
+  const handleCloseGoogleOnboarding = () => {
+    sessionStorage.setItem('dismissed_google_onboarding', 'true');
+    setIsGoogleOnboardingModalOpen(false);
+  };
 
   const handleSaveGoogleOnboarding = async (formData) => {
     try {
       const updates = {
-        displayName: formData.displayName.trim(),
-        username: formData.username.trim(),
+        displayName: formData.displayName?.trim() || currentUser?.displayName || 'Athlete',
+        username: (formData.username?.trim() || 'athlete').toLowerCase().replace(/\s+/g, '_'),
+        avatar: currentUser?.avatar || currentUser?.photoURL,
         targets: {
-          calories: Number(formData.calories) || 2600,
-          protein: Number(formData.protein) || 165,
-          carbs: Number(formData.carbs) || 280,
-          fats: Number(formData.fats) || 70,
-          water: Number(formData.water) || 3500,
-          steps: Number(formData.steps) || 10000,
+          calories: Number(formData.calories) > 0 ? Number(formData.calories) : 2600,
+          protein: Number(formData.protein) > 0 ? Number(formData.protein) : 165,
+          carbs: Number(formData.carbs) > 0 ? Number(formData.carbs) : 280,
+          fats: Number(formData.fats) > 0 ? Number(formData.fats) : 70,
+          water: Number(formData.water) > 0 ? Number(formData.water) : 3500,
+          steps: Number(formData.steps) > 0 ? Number(formData.steps) : 10000,
         },
         settings: {
           units: formData.units || 'metric',
@@ -88,6 +97,7 @@ export default function DashboardLayout({ showToast }) {
         await updateProfile(updates);
       }
       sessionStorage.removeItem('prompt_google_onboarding');
+      sessionStorage.removeItem('dismissed_google_onboarding');
       setIsGoogleOnboardingModalOpen(false);
       sfx.playSuccess();
       showToast(`Athlete Profile Established! Welcome, ${updates.displayName}! 🚀`, 'success');
@@ -254,10 +264,7 @@ export default function DashboardLayout({ showToast }) {
       {/* Google Athlete Profile Onboarding Modal (Matching Reference Picture) */}
       <GoogleOnboardingModal
         isOpen={isGoogleOnboardingModalOpen}
-        onClose={() => {
-          sessionStorage.removeItem('prompt_google_onboarding');
-          setIsGoogleOnboardingModalOpen(false);
-        }}
+        onClose={handleCloseGoogleOnboarding}
         currentUser={currentUser}
         onSave={handleSaveGoogleOnboarding}
       />

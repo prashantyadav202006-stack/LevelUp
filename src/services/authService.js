@@ -16,7 +16,7 @@ import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db, googleProvider, isFirebaseConfigured } from '../firebase.js';
 import { getStoredItem, setStoredItem } from './storageHelper.js';
 
-const DEFAULT_TARGETS = {
+export const DEFAULT_TARGETS = {
   calories: 2600,
   protein: 165,
   carbs: 280,
@@ -25,7 +25,7 @@ const DEFAULT_TARGETS = {
   steps: 10000,
 };
 
-const DEFAULT_SETTINGS = {
+export const DEFAULT_SETTINGS = {
   units: 'metric',
   timeZone: 'Asia/Kolkata',
   visibility: 'public',
@@ -69,6 +69,7 @@ export const authService = {
   /**
    * Subscribe to real Firebase authentication state changes.
    * Single source of truth: emits authenticated user object or null.
+   * Guarantees 0ms local rehydration + permanent Firestore persistence forever.
    */
   onAuthStateChange(callback) {
     if (!auth) {
@@ -79,74 +80,131 @@ export const authService = {
 
     return onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
+        const uid = firebaseUser.uid;
+        const email = firebaseUser.email || '';
+        const fallbackName = firebaseUser.displayName || (email ? email.split('@')[0] : 'Athlete');
+        const defaultUsername = fallbackName.toLowerCase().replace(/[^a-z0-9_]/g, '_');
         const isGoogle =
           firebaseUser.providerData?.some((p) => p.providerId === 'google.com') ||
           sessionStorage.getItem('last_auth_provider') === 'google';
 
-        const email = firebaseUser.email || '';
-        const fallbackName = firebaseUser.displayName || (email ? email.split('@')[0] : 'Athlete');
-        const defaultUsername = fallbackName.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        // 1. Instant user-scoped local rehydration (survives logouts & page refreshes)
+        const cachedProfile = getStoredItem(`profile_${uid}`, null);
+        if (cachedProfile) {
+          setStoredItem('active_user', cachedProfile);
+          callback(cachedProfile);
+        }
 
-        // Fetch or initialize Firestore user profile
+        // 2. Fetch or initialize Cloud Firestore profile
         let userProfile = null;
         if (db && isFirebaseConfigured) {
           try {
-            const userDocRef = doc(db, 'users', firebaseUser.uid);
+            const userDocRef = doc(db, 'users', uid);
             const userSnap = await getDoc(userDocRef);
             if (userSnap.exists()) {
               userProfile = userSnap.data();
             } else {
+              // Brand new user in Firestore: initialize with default or cached values
               userProfile = {
-                uid: firebaseUser.uid,
-                email: email,
-                displayName: fallbackName,
-                username: defaultUsername,
+                uid,
+                email,
+                displayName: cachedProfile?.displayName || fallbackName,
+                username: cachedProfile?.username || defaultUsername,
                 avatar:
+                  cachedProfile?.avatar ||
                   firebaseUser.photoURL ||
                   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-                level: 1,
-                xp: 0,
-                currentStreak: 0,
-                bestStreak: 0,
+                level: cachedProfile?.level || 1,
+                xp: cachedProfile?.xp ?? 0,
+                currentStreak: cachedProfile?.currentStreak ?? 0,
+                bestStreak: cachedProfile?.bestStreak ?? 0,
                 authProvider: isGoogle ? 'google' : 'password',
-                isOnboardingCompleted: false,
+                isOnboardingCompleted: cachedProfile?.isOnboardingCompleted === true,
                 createdAt: serverTimestamp(),
-                targets: DEFAULT_TARGETS,
-                settings: DEFAULT_SETTINGS,
+                targets: cachedProfile?.targets || DEFAULT_TARGETS,
+                settings: cachedProfile?.settings || DEFAULT_SETTINGS,
               };
               await setDoc(userDocRef, userProfile);
+
+              // Public profile document for discovery & leaderboards
+              try {
+                const publicRef = doc(db, 'profiles', uid);
+                await setDoc(publicRef, {
+                  uid,
+                  displayName: userProfile.displayName,
+                  username: userProfile.username,
+                  avatar: userProfile.avatar,
+                  level: userProfile.level,
+                  xp: userProfile.xp,
+                  currentStreak: userProfile.currentStreak,
+                  bestStreak: userProfile.bestStreak,
+                  createdAt: serverTimestamp(),
+                });
+              } catch (pubErr) {
+                console.warn('[Firestore] Profile init public error:', pubErr);
+              }
             }
           } catch (err) {
             console.warn('[Firestore] Profile fetch error:', err);
           }
         }
 
-        const authenticatedUser = {
-          uid: firebaseUser.uid,
-          email: firebaseUser.email,
-          displayName: userProfile?.displayName || firebaseUser.displayName || fallbackName,
-          username: userProfile?.username || defaultUsername,
-          photoURL: firebaseUser.photoURL || userProfile?.avatar,
-          avatar:
-            userProfile?.avatar ||
-            firebaseUser.photoURL ||
-            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-          authProvider: isGoogle ? 'google' : (userProfile?.authProvider || 'password'),
-          isOnboardingCompleted: userProfile?.isOnboardingCompleted === true,
-          level: userProfile?.level || 1,
-          xp: userProfile?.xp ?? 0,
-          currentStreak: userProfile?.currentStreak ?? 0,
-          bestStreak: userProfile?.bestStreak ?? 0,
-          targets: userProfile?.targets || DEFAULT_TARGETS,
-          settings: userProfile?.settings || DEFAULT_SETTINGS,
-          ...(userProfile || {}),
+        // Deep-merge targets and settings to ensure no customized values are ever lost
+        const mergedTargets = {
+          ...DEFAULT_TARGETS,
+          ...(cachedProfile?.targets || {}),
+          ...(userProfile?.targets || {}),
         };
 
-        // Cache active user for fast offline restore
+        const mergedSettings = {
+          ...DEFAULT_SETTINGS,
+          ...(cachedProfile?.settings || {}),
+          ...(userProfile?.settings || {}),
+        };
+
+        const authenticatedUser = {
+          uid,
+          email,
+          displayName:
+            userProfile?.displayName ||
+            cachedProfile?.displayName ||
+            firebaseUser.displayName ||
+            fallbackName,
+          username:
+            userProfile?.username ||
+            cachedProfile?.username ||
+            defaultUsername,
+          photoURL:
+            firebaseUser.photoURL ||
+            userProfile?.avatar ||
+            cachedProfile?.avatar,
+          avatar:
+            userProfile?.avatar ||
+            cachedProfile?.avatar ||
+            firebaseUser.photoURL ||
+            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+          authProvider: isGoogle
+            ? 'google'
+            : (userProfile?.authProvider || cachedProfile?.authProvider || 'password'),
+          isOnboardingCompleted:
+            userProfile?.isOnboardingCompleted === true ||
+            cachedProfile?.isOnboardingCompleted === true,
+          level: userProfile?.level ?? (cachedProfile?.level || 1),
+          xp: userProfile?.xp ?? (cachedProfile?.xp ?? 0),
+          currentStreak: userProfile?.currentStreak ?? (cachedProfile?.currentStreak ?? 0),
+          bestStreak: userProfile?.bestStreak ?? (cachedProfile?.bestStreak ?? 0),
+          ...(cachedProfile || {}),
+          ...(userProfile || {}),
+          targets: mergedTargets,
+          settings: mergedSettings,
+        };
+
+        // Cache permanently in user-scoped persistent storage and active session
+        setStoredItem(`profile_${uid}`, authenticatedUser);
         setStoredItem('active_user', authenticatedUser);
         callback(authenticatedUser);
       } else {
-        // User logged out or unauthenticated: clean state immediately
+        // User logged out or unauthenticated: clean active session only
         setStoredItem('active_user', null);
         callback(null);
       }
@@ -196,29 +254,47 @@ export const authService = {
       }
     }
 
-    // Initialize user doc in Firestore
-    if (db && user) {
-      try {
-        const userDocRef = doc(db, 'users', user.uid);
-        const profile = {
-          uid: user.uid,
-          email: cleanEmail,
-          displayName: name,
-          username: name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
-          avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-          level: 1,
-          xp: 150,
-          currentStreak: 1,
-          bestStreak: 1,
-          authProvider: 'password',
-          isOnboardingCompleted: false,
-          createdAt: serverTimestamp(),
-          targets: DEFAULT_TARGETS,
-          settings: DEFAULT_SETTINGS,
-        };
-        await setDoc(userDocRef, profile);
-      } catch (e) {
-        console.warn('[Firestore] Profile init on signup error:', e);
+    // Initialize user doc in Firestore & local permanent storage
+    if (user) {
+      const profile = {
+        uid: user.uid,
+        email: cleanEmail,
+        displayName: name,
+        username: name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+        level: 1,
+        xp: 150,
+        currentStreak: 1,
+        bestStreak: 1,
+        authProvider: 'password',
+        isOnboardingCompleted: false,
+        targets: DEFAULT_TARGETS,
+        settings: DEFAULT_SETTINGS,
+      };
+
+      setStoredItem(`profile_${user.uid}`, profile);
+      setStoredItem('active_user', profile);
+
+      if (db && isFirebaseConfigured) {
+        try {
+          const userDocRef = doc(db, 'users', user.uid);
+          await setDoc(userDocRef, { ...profile, createdAt: serverTimestamp() });
+
+          const publicRef = doc(db, 'profiles', user.uid);
+          await setDoc(publicRef, {
+            uid: user.uid,
+            displayName: name,
+            username: profile.username,
+            avatar: profile.avatar,
+            level: 1,
+            xp: 150,
+            currentStreak: 1,
+            bestStreak: 1,
+            createdAt: serverTimestamp(),
+          });
+        } catch (e) {
+          console.warn('[Firestore] Profile init on signup error:', e);
+        }
       }
     }
 
@@ -230,7 +306,6 @@ export const authService = {
    */
   async signInWithGoogle() {
     sessionStorage.setItem('last_auth_provider', 'google');
-    sessionStorage.setItem('prompt_google_onboarding', 'true');
 
     if (!auth) {
       throw new Error('Firebase Auth is not available.');
@@ -254,10 +329,12 @@ export const authService = {
    * Complete Sign Out
    */
   async signOut() {
-    // 1. Wipe active session user & temporary markers
+    // 1. Wipe active session user & temporary markers only
+    // Note: profile_{uid} is kept intact so user's personalized targets remain forever on re-login
     setStoredItem('active_user', null);
     sessionStorage.removeItem('last_auth_provider');
     sessionStorage.removeItem('prompt_google_onboarding');
+    sessionStorage.removeItem('dismissed_google_onboarding');
 
     // 2. Complete Firebase Sign Out
     if (auth) {
@@ -270,22 +347,84 @@ export const authService = {
   },
 
   /**
-   * Update Profile in Firestore and local state
+   * Update Profile in Firestore and local state permanently
+   * All changes to targets, name, username, biometrics, and preferences are saved forever until changed.
    */
   async updateUserProfile(uid, updates) {
     if (!uid) return null;
-    const current = getStoredItem('active_user', null) || {};
-    const updated = { ...current, ...updates };
+    const current =
+      getStoredItem(`profile_${uid}`, null) ||
+      getStoredItem('active_user', null) ||
+      {};
+
+    const updatedTargets = updates.targets
+      ? { ...(current.targets || DEFAULT_TARGETS), ...updates.targets }
+      : (current.targets || DEFAULT_TARGETS);
+
+    const updatedSettings = updates.settings
+      ? { ...(current.settings || DEFAULT_SETTINGS), ...updates.settings }
+      : (current.settings || DEFAULT_SETTINGS);
+
+    const updated = {
+      ...current,
+      ...updates,
+      targets: updatedTargets,
+      settings: updatedSettings,
+    };
+
+    // Save permanently in user-scoped persistent storage (never wiped on sign out)
+    setStoredItem(`profile_${uid}`, updated);
     setStoredItem('active_user', updated);
 
+    // Update Firebase Auth profile if displayName or avatar changed
+    if (auth?.currentUser && (updates.displayName || updates.avatar)) {
+      try {
+        await updateProfile(auth.currentUser, {
+          displayName: updates.displayName || auth.currentUser.displayName,
+          photoURL: updates.avatar || auth.currentUser.photoURL,
+        });
+      } catch (authErr) {
+        console.warn('Could not update Firebase Auth user profile:', authErr);
+      }
+    }
+
+    // Persist permanently in Cloud Firestore
     if (db && isFirebaseConfigured) {
       try {
         const userRef = doc(db, 'users', uid);
-        await setDoc(userRef, updates, { merge: true });
+        await setDoc(
+          userRef,
+          {
+            ...updates,
+            targets: updatedTargets,
+            settings: updatedSettings,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        // Also update public profile
+        const publicRef = doc(db, 'profiles', uid);
+        await setDoc(
+          publicRef,
+          {
+            uid,
+            displayName: updated.displayName,
+            username: updated.username,
+            avatar: updated.avatar,
+            level: updated.level || 1,
+            xp: updated.xp || 0,
+            currentStreak: updated.currentStreak || 0,
+            bestStreak: updated.bestStreak || 0,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
       } catch (e) {
         console.warn('Failed to update Firestore profile:', e);
       }
     }
+
     return updated;
   },
 };

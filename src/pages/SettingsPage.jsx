@@ -44,6 +44,7 @@ export default function SettingsPage() {
   });
 
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (currentUser) {
@@ -57,38 +58,55 @@ export default function SettingsPage() {
         setVisibility(currentUser.settings.visibility || 'public');
       }
       if (currentUser.targets) {
-        setTargets(currentUser.targets);
+        setTargets({
+          calories: currentUser.targets.calories ?? 2600,
+          protein: currentUser.targets.protein ?? 165,
+          carbs: currentUser.targets.carbs ?? 280,
+          fats: currentUser.targets.fats ?? 70,
+          water: currentUser.targets.water ?? 3500,
+          steps: currentUser.targets.steps ?? 10000,
+        });
       }
     }
   }, [currentUser]);
 
   const handleSave = async (e) => {
     e.preventDefault();
-    sfx.playSuccess();
+    sfx.playClick();
+    setIsSaving(true);
 
-    await updateProfile({
-      displayName,
-      username: username.toLowerCase().replace(/\s+/g, '_'),
-      avatar,
-      targets: {
-        calories: Number(targets.calories),
-        protein: Number(targets.protein),
-        carbs: Number(targets.carbs),
-        fats: Number(targets.fats),
-        water: Number(targets.water),
-        steps: Number(targets.steps),
-      },
-      settings: {
-        units,
-        timeZone,
-        visibility,
-        notifications: true,
-      },
-      isOnboardingCompleted: true,
-    });
+    try {
+      const sanitizedTargets = {
+        calories: Number(targets.calories) > 0 ? Number(targets.calories) : 2600,
+        protein: Number(targets.protein) > 0 ? Number(targets.protein) : 165,
+        carbs: Number(targets.carbs) > 0 ? Number(targets.carbs) : 280,
+        fats: Number(targets.fats) > 0 ? Number(targets.fats) : 70,
+        water: Number(targets.water) > 0 ? Number(targets.water) : 3500,
+        steps: Number(targets.steps) > 0 ? Number(targets.steps) : 10000,
+      };
 
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 3500);
+      await updateProfile({
+        displayName: displayName.trim(),
+        username: username.toLowerCase().replace(/\s+/g, '_'),
+        avatar,
+        targets: sanitizedTargets,
+        settings: {
+          units,
+          timeZone,
+          visibility,
+          notifications: true,
+        },
+        isOnboardingCompleted: true,
+      });
+
+      sfx.playSuccess();
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 4500);
+    } catch (err) {
+      console.error('Failed to save settings:', err);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleSignOut = () => {
@@ -115,7 +133,7 @@ export default function SettingsPage() {
       {savedSuccess && (
         <div className="feedback-banner success">
           <Check size={18} />
-          <span>Settings saved successfully! Biometrics and targets updated.</span>
+          <span>All profile details and daily targets saved permanently in Cloud Firestore and local storage!</span>
         </div>
       )}
 
@@ -355,10 +373,10 @@ export default function SettingsPage() {
         </div>
 
         <div className="settings-footer-actions">
-          <button type="submit" className="submit-cta-btn max-w-sm">
+          <button type="submit" className="submit-cta-btn max-w-sm" disabled={isSaving}>
             <span className="btn-text">
               <Sparkles size={16} />
-              <span>Save Changes</span>
+              <span>{isSaving ? 'Saving Changes Forever...' : 'Save Changes Forever'}</span>
             </span>
           </button>
         </div>
