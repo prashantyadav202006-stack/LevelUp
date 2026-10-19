@@ -406,13 +406,24 @@ export const socialService = {
 
   /**
    * Accept an incoming friend request
+   * Saves both friends permanently to Cloud Firestore database users/{uid}/friends
    */
   async acceptFriendRequest(currentUser, requestId) {
     if (!currentUser?.uid || !requestId) return;
 
     // Find the request record
+    let target = null;
     const reqs = getStoredItem(`requests_${currentUser.uid}`, []);
-    const target = reqs.find((r) => r.id === requestId);
+    target = reqs.find((r) => r.id === requestId);
+
+    if (!target && db && isFirebaseConfigured) {
+      try {
+        const reqDoc = await getDoc(doc(db, 'friendRequests', requestId));
+        if (reqDoc.exists()) {
+          target = { id: reqDoc.id, ...reqDoc.data() };
+        }
+      } catch {}
+    }
 
     const senderId = target?.senderId;
     const senderName = target?.senderName || 'Athlete';
@@ -421,53 +432,73 @@ export const socialService = {
       target?.senderAvatar ||
       'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
 
-    // 1. Update Firestore friendRequests status
+    const myDisplayName =
+      currentUser.displayName || (currentUser.email ? currentUser.email.split('@')[0] : 'Athlete');
+    const myUsername =
+      currentUser.username || myDisplayName.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    const myAvatar =
+      currentUser.avatar ||
+      currentUser.photoURL ||
+      'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80';
+
+    const newFriendForMe = {
+      id: senderId,
+      uid: senderId,
+      displayName: senderName,
+      username: senderUsername,
+      avatar: senderAvatar,
+      level: Number(target?.senderLevel) || 1,
+      xp: Number(target?.senderXp) || 150,
+      currentStreak: Number(target?.senderStreak) || 1,
+      goalsCompleted: 0,
+      status: 'Accountability Partner',
+    };
+
+    const meAsFriendForSender = {
+      id: currentUser.uid,
+      uid: currentUser.uid,
+      displayName: myDisplayName,
+      username: myUsername,
+      avatar: myAvatar,
+      level: Number(currentUser.level) || 1,
+      xp: Number(currentUser.xp) || 0,
+      currentStreak: Number(currentUser.currentStreak) || 0,
+      goalsCompleted: 0,
+      status: 'Accountability Partner',
+    };
+
+    // 1. Save permanently to Cloud Firestore database!
     if (db && isFirebaseConfigured) {
       try {
+        // A. Update friendRequests status to 'accepted'
         const reqRef = doc(db, 'friendRequests', requestId);
         await setDoc(reqRef, { status: 'accepted', updatedAt: serverTimestamp() }, { merge: true });
+
+        if (senderId) {
+          // B. Save to users/{currentUser.uid}/friends/{senderId} in Cloud Firestore
+          const myFriendRef = doc(db, 'users', currentUser.uid, 'friends', senderId);
+          await setDoc(myFriendRef, { ...newFriendForMe, addedAt: serverTimestamp() }, { merge: true });
+
+          // C. Save to users/{senderId}/friends/{currentUser.uid} in Cloud Firestore
+          const senderFriendRef = doc(db, 'users', senderId, 'friends', currentUser.uid);
+          await setDoc(senderFriendRef, { ...meAsFriendForSender, addedAt: serverTimestamp() }, { merge: true });
+        }
       } catch (e) {
-        console.warn('[socialService] Firestore acceptFriendRequest notice:', e.message);
+        console.warn('[socialService] Firestore friend save notice:', e.message);
       }
     }
 
-    // 2. Add to recipient's friends list
+    // 2. Add to recipient's local friends list
     const myFriends = getStoredItem(`friends_${currentUser.uid}`, []);
     if (!myFriends.some((f) => f.id === senderId || f.uid === senderId)) {
-      const newFriend = {
-        id: senderId,
-        uid: senderId,
-        displayName: senderName,
-        username: senderUsername,
-        avatar: senderAvatar,
-        level: 1,
-        xp: 150,
-        currentStreak: 1,
-        goalsCompleted: 0,
-        status: 'Accountability Partner',
-      };
-      setStoredItem(`friends_${currentUser.uid}`, [...myFriends, newFriend]);
+      setStoredItem(`friends_${currentUser.uid}`, [...myFriends, newFriendForMe]);
     }
 
-    // 3. Add to sender's friends list
+    // 3. Add to sender's local friends list
     if (senderId) {
       const senderFriends = getStoredItem(`friends_${senderId}`, []);
-      const myDisplayName =
-        currentUser.displayName || (currentUser.email ? currentUser.email.split('@')[0] : 'Athlete');
       if (!senderFriends.some((f) => f.id === currentUser.uid || f.uid === currentUser.uid)) {
-        const meAsFriend = {
-          id: currentUser.uid,
-          uid: currentUser.uid,
-          displayName: myDisplayName,
-          username: currentUser.username || myDisplayName.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
-          avatar: currentUser.avatar || currentUser.photoURL || '',
-          level: currentUser.level || 1,
-          xp: currentUser.xp || 0,
-          currentStreak: currentUser.currentStreak || 0,
-          goalsCompleted: 0,
-          status: 'Accountability Partner',
-        };
-        setStoredItem(`friends_${senderId}`, [...senderFriends, meAsFriend]);
+        setStoredItem(`friends_${senderId}`, [...senderFriends, meAsFriendForSender]);
       }
     }
 
@@ -526,22 +557,193 @@ export const socialService = {
   },
 
   /**
-   * Get confirmed friends for user
+   * Fetch confirmed friends directly from Cloud Firestore database
+   * Synchronizes with local storage so friends remain saved forever across logouts & devices.
+   */
+  async fetchFriends(uid) {
+    if (!uid) return [];
+    const friendsMap = new Map();
+
+    // 1. Fetch from Cloud Firestore users/{uid}/friends subcollection
+    if (db && isFirebaseConfigured) {
+      try {
+        const friendsColl = collection(db, 'users', uid, 'friends');
+        const snap = await getDocs(friendsColl);
+        snap.forEach((docSnap) => {
+          const data = docSnap.data();
+          const friendId = docSnap.id || data.uid || data.id;
+          if (friendId && !isDemoUser(friendId, data.username)) {
+            friendsMap.set(friendId, {
+              id: friendId,
+              uid: friendId,
+              displayName: data.displayName || 'Athlete',
+              username: data.username || 'athlete',
+              avatar: data.avatar || '',
+              level: Number(data.level) || 1,
+              xp: Number(data.xp) || 0,
+              currentStreak: Number(data.currentStreak) || 0,
+              status: data.status || 'Accountability Partner',
+            });
+          }
+        });
+
+        // 2. Check accepted friend requests in Cloud Firestore and auto-backfill if missing
+        try {
+          const reqSnap = await getDocs(
+            query(collection(db, 'friendRequests'), where('recipientId', '==', uid))
+          );
+          for (const d of reqSnap.docs) {
+            const r = d.data();
+            if (r.status === 'accepted' && r.senderId && !friendsMap.has(r.senderId)) {
+              const friendObj = {
+                id: r.senderId,
+                uid: r.senderId,
+                displayName: r.senderName || 'Athlete',
+                username: r.senderUsername || 'athlete',
+                avatar: r.senderAvatar || '',
+                level: 1,
+                xp: 150,
+                currentStreak: 1,
+                status: 'Accountability Partner',
+              };
+              friendsMap.set(r.senderId, friendObj);
+              // Backfill to Firestore
+              setDoc(doc(db, 'users', uid, 'friends', r.senderId), {
+                ...friendObj,
+                addedAt: serverTimestamp(),
+              }, { merge: true }).catch(() => {});
+            }
+          }
+        } catch {}
+
+        try {
+          const sentSnap = await getDocs(
+            query(collection(db, 'friendRequests'), where('senderId', '==', uid))
+          );
+          for (const d of sentSnap.docs) {
+            const r = d.data();
+            if (r.status === 'accepted' && r.recipientId && !friendsMap.has(r.recipientId)) {
+              const friendObj = {
+                id: r.recipientId,
+                uid: r.recipientId,
+                displayName: r.recipientName || 'Athlete',
+                username: r.recipientUsername || 'athlete',
+                avatar: r.recipientAvatar || '',
+                level: 1,
+                xp: 150,
+                currentStreak: 1,
+                status: 'Accountability Partner',
+              };
+              friendsMap.set(r.recipientId, friendObj);
+              // Backfill to Firestore
+              setDoc(doc(db, 'users', uid, 'friends', r.recipientId), {
+                ...friendObj,
+                addedAt: serverTimestamp(),
+              }, { merge: true }).catch(() => {});
+            }
+          }
+        } catch {}
+      } catch (err) {
+        console.warn('[socialService] Firestore fetchFriends error:', err.message);
+      }
+    }
+
+    // 3. Fallback and merge with local storage
+    const local = getStoredItem(`friends_${uid}`, []);
+    local.forEach((f) => {
+      const fid = f.id || f.uid;
+      if (fid && !isDemoUser(fid, f.username) && !friendsMap.has(fid)) {
+        friendsMap.set(fid, f);
+      }
+    });
+
+    const list = Array.from(friendsMap.values());
+    setStoredItem(`friends_${uid}`, list);
+    return list;
+  },
+
+  /**
+   * Real-time listener for friends changes in Cloud Firestore
+   */
+  subscribeFriends(uid, callback) {
+    if (!uid) {
+      callback([]);
+      return () => {};
+    }
+
+    // Immediate cached emit
+    callback(this.getFriends(uid));
+
+    let firestoreUnsub = null;
+    if (db && isFirebaseConfigured) {
+      try {
+        const friendsColl = collection(db, 'users', uid, 'friends');
+        firestoreUnsub = onSnapshot(
+          friendsColl,
+          (snapshot) => {
+            const list = snapshot.docs
+              .map((d) => ({ id: d.id, ...d.data() }))
+              .filter((f) => !isDemoUser(f.id || f.uid, f.username));
+            if (list.length > 0) {
+              setStoredItem(`friends_${uid}`, list);
+              callback(list);
+            }
+          },
+          (err) => {
+            console.warn('[socialService] Friends onSnapshot error:', err.message);
+          }
+        );
+      } catch (err) {
+        console.warn('[socialService] Friends subscribe error:', err);
+      }
+    }
+
+    const handleFriendUpdate = () => {
+      this.fetchFriends(uid).then((list) => callback(list));
+    };
+    window.addEventListener('levelup_friend_updated', handleFriendUpdate);
+
+    return () => {
+      if (typeof firestoreUnsub === 'function') firestoreUnsub();
+      window.removeEventListener('levelup_friend_updated', handleFriendUpdate);
+    };
+  },
+
+  /**
+   * Get confirmed friends for user (synchronous cache read with background Firestore refresh)
    */
   getFriends(uid) {
     if (!uid) return [];
+    // Trigger background fetch to keep cache synced with Cloud Firestore
+    this.fetchFriends(uid).catch(() => {});
     const list = getStoredItem(`friends_${uid}`, []);
-    // Guarantee no demo users ever appear in friends
     return list.filter((f) => !isDemoUser(f.id || f.uid, f.username));
   },
 
   /**
-   * Remove friend
+   * Remove friend permanently from Cloud Firestore database and local storage
    */
-  removeFriend(uid, friendId) {
+  async removeFriend(uid, friendId) {
+    if (!uid || !friendId) return [];
+
+    // 1. Delete from Cloud Firestore database
+    if (db && isFirebaseConfigured) {
+      try {
+        const myRef = doc(db, 'users', uid, 'friends', friendId);
+        await deleteDoc(myRef);
+
+        const otherRef = doc(db, 'users', friendId, 'friends', uid);
+        await deleteDoc(otherRef);
+      } catch (err) {
+        console.warn('[socialService] Firestore removeFriend error:', err.message);
+      }
+    }
+
+    // 2. Remove from local storage
     const current = this.getFriends(uid);
     const updated = current.filter((f) => f.id !== friendId && f.uid !== friendId);
     setStoredItem(`friends_${uid}`, updated);
+
     try {
       window.dispatchEvent(new CustomEvent('levelup_friend_updated'));
     } catch {

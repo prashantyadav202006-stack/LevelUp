@@ -50,6 +50,12 @@ service cloud.firestore {
       match /weightLogs/{recordId} {
         allow read, write: if isOwner(userId);
       }
+
+      // Friends Subcollection: user can read and manage their accountability circle
+      match /friends/{friendId} {
+        allow read: if isAuthenticated() && (request.auth.uid == userId || request.auth.uid == friendId);
+        allow write: if isAuthenticated() && (request.auth.uid == userId || request.auth.uid == friendId);
+      }
     }
 
     // 2. Public Profiles (for social search, friend cards, leaderboards)

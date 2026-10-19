@@ -15,18 +15,24 @@ export default function YourFriendsModal({
   const [requests, setRequests] = useState([]);
   const [cheeredIds, setCheeredIds] = useState(new Set());
 
-  const loadData = () => {
+  const loadData = async () => {
     if (currentUser?.uid) {
-      const f = socialService.getFriends(currentUser.uid) || [];
+      const f = await socialService.fetchFriends(currentUser.uid);
       const r = socialService.getFriendRequests(currentUser.uid) || [];
-      setFriends(f);
-      setRequests(r);
+      setFriends(f || []);
+      setRequests(r || []);
     }
   };
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && currentUser?.uid) {
       loadData();
+      const unsub = socialService.subscribeFriends(currentUser.uid, (list) => {
+        setFriends(list || []);
+      });
+      return () => {
+        if (typeof unsub === 'function') unsub();
+      };
     }
   }, [isOpen, currentUser]);
 
@@ -36,7 +42,7 @@ export default function YourFriendsModal({
   const handleAcceptInvite = async (requestId) => {
     sfx.playSuccess();
     await socialService.acceptFriendRequest(currentUser, requestId);
-    loadData();
+    await loadData();
     if (showToast) showToast('Friend request accepted! Welcome to the circle ⚡', 'success');
   };
 
@@ -44,7 +50,7 @@ export default function YourFriendsModal({
   const handleRejectInvite = async (requestId) => {
     sfx.playClick();
     await socialService.rejectFriendRequest(currentUser, requestId);
-    loadData();
+    await loadData();
     if (showToast) showToast('Invite declined.', 'info');
   };
 
@@ -56,10 +62,10 @@ export default function YourFriendsModal({
   };
 
   // Remove friend
-  const handleRemoveFriend = (friendId, name) => {
+  const handleRemoveFriend = async (friendId, name) => {
     sfx.playClick();
     if (window.confirm(`Remove ${name} from your accountability circle?`)) {
-      const updated = socialService.removeFriend(currentUser?.uid, friendId);
+      const updated = await socialService.removeFriend(currentUser?.uid, friendId);
       setFriends(updated || []);
       if (showToast) showToast(`Removed ${name} from friends.`, 'info');
     }

@@ -52,15 +52,28 @@ export default function SocialPage({ initialTab = 'your-friends' }) {
 
   const loadData = async () => {
     if (!currentUser?.uid) return;
-    setFriends(socialService.getFriends(currentUser.uid));
-    setRequests(socialService.getFriendRequests(currentUser.uid));
-    setChallenges(socialService.getChallenges(currentUser.uid));
-    const athletes = await socialService.getLegitimateUsers(currentUser.uid);
+    const [fetchedFriends, fetchedRequests, fetchedChallenges, athletes] = await Promise.all([
+      socialService.fetchFriends(currentUser.uid),
+      Promise.resolve(socialService.getFriendRequests(currentUser.uid)),
+      Promise.resolve(socialService.getChallenges(currentUser.uid)),
+      socialService.getLegitimateUsers(currentUser.uid),
+    ]);
+    setFriends(fetchedFriends || []);
+    setRequests(fetchedRequests || []);
+    setChallenges(fetchedChallenges || []);
     setAllAthletes(athletes || []);
   };
 
   useEffect(() => {
-    loadData();
+    if (currentUser?.uid) {
+      loadData();
+      const unsub = socialService.subscribeFriends(currentUser.uid, (list) => {
+        setFriends(list || []);
+      });
+      return () => {
+        if (typeof unsub === 'function') unsub();
+      };
+    }
   }, [currentUser]);
 
   // Handle Add Friend Action from Directory
@@ -93,11 +106,11 @@ export default function SocialPage({ initialTab = 'your-friends' }) {
   };
 
   // Remove Friend
-  const handleRemoveFriend = (friendId) => {
+  const handleRemoveFriend = async (friendId) => {
     sfx.playClick();
     if (window.confirm('Remove athlete from your training partners?')) {
-      socialService.removeFriend(currentUser?.uid, friendId);
-      loadData();
+      await socialService.removeFriend(currentUser?.uid, friendId);
+      await loadData();
     }
   };
 
